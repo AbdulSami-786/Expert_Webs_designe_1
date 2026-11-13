@@ -1,0 +1,361 @@
+/* ==========================================================================
+   Desktop refinements — "professional control room" (Design Brief 3)
+   --------------------------------------------------------------------------
+   Everything here is scoped to >= 901px so the mobile app-like experience is
+   untouched. The goal is the density of real back-office software (Tally,
+   Zoho Books, SAP): more information per screen, tighter rhythm, quieter
+   chrome, and numbers that dominate their surroundings.
+   ========================================================================== */
+
+@media (min-width: 901px) {
+
+  /* ---------------------------------------------------------------
+     Sidebar — quieter, denser, clearer grouping
+     --------------------------------------------------------------- */
+  .sidebar {
+    background: #111318;                       /* slightly deeper than surface slate */
+    border-right: 1px solid rgba(255,255,255,.06);
+  }
+
+  .sidebar-brand {
+    padding: 13px 14px;
+    font-size: 13.5px;
+    background: #111318;
+    border-bottom-color: rgba(255,255,255,.07);
+  }
+  .sidebar-brand .logo { height: 20px; width: auto; }
+  .sidebar-brand small { font-size: 10.5px; margin-top: 1px; }
+
+  .nav-group { padding: 10px 8px 0; }
+  .nav-group + .nav-group { padding-top: 12px; }
+  .nav-group-label {
+    font-size: 9.5px;
+    letter-spacing: .1em;
+    color: #526179;
+    padding: 0 8px 5px;
+  }
+
+  /* Denser rows fit the full module list without scrolling */
+  .nav-item {
+    padding: 6px 9px;
+    font-size: 13px;
+    gap: 9px;
+    border-radius: 4px;
+    margin-bottom: 0;
+  }
+  .nav-item svg { width: 15px; height: 15px; opacity: .78; }
+  .nav-item:hover svg { opacity: 1; }
+
+  /* Active state reads as a selected row, not a floating pill */
+  .nav-item.active {
+    background: rgba(251,92,0,.16);
+    color: #fff;
+    box-shadow: inset 2px 0 0 var(--accent);
+    border-radius: 0 4px 4px 0;
+  }
+  .nav-item.active svg { opacity: 1; color: #FFAA00; }
+
+  .nav-item .nav-badge {
+    font-size: 10px;
+    padding: 0 5px;
+    min-width: 17px;
+    text-align: center;
+    line-height: 16px;
+    border-radius: 3px;
+  }
+
+  /* ---------------------------------------------------------------
+     Top bar — a real toolbar
+     --------------------------------------------------------------- */
+  .topbar {
+    padding: 0 16px;
+    gap: 9px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 1px 2px rgba(16,24,40,.03);
+  }
+  .topbar .shop { font-size: 13px; line-height: 1.25; }
+  .topbar .shop small { font-size: 11px; }
+
+  /* Toolbar buttons are compact and visually secondary to the data */
+  .topbar .btn { padding: 6px 11px; font-size: 12.5px; }
+  .topbar .btn svg { width: 14px; height: 14px; }
+
+  /* ---------------------------------------------------------------
+     Page rhythm
+     --------------------------------------------------------------- */
+  .page { padding: 16px 18px 26px; }
+
+  .page-head { margin-bottom: 14px; gap: 10px; align-items: center; }
+  h1, .h1 { font-size: 19px; letter-spacing: -.015em; }
+  .page-head p.sub { font-size: 12px; margin-top: 1px; }
+  .page-head .btn { padding: 6px 11px; font-size: 12.5px; }
+  .page-head .btn svg { width: 14px; height: 14px; }
+
+  /* ---------------------------------------------------------------
+     Cards — flat, bordered panels rather than floating surfaces
+     --------------------------------------------------------------- */
+  .card {
+    border-radius: 6px;
+    box-shadow: none;
+    border-color: #E3E6EA;
+  }
+  .card-head {
+    padding: 9px 13px;
+    background: #FCFCFD;
+    border-bottom-color: #E9ECF0;
+    border-radius: 6px 6px 0 0;
+    min-height: 40px;
+  }
+  .card-head .h2 { font-size: 13.5px; font-weight: 650; letter-spacing: -.005em; }
+  .card-head .small.muted { font-size: 11.5px; margin-top: 1px; }
+  .card-head .btn { padding: 4px 9px; font-size: 12px; min-height: 0; }
+  .card-body { padding: 13px; }
+
+  .grid-2, .grid-3 { gap: 12px; }
+  .col { gap: 12px; }
+  .mb-2 { margin-bottom: 12px; }
+
+  /* ---------------------------------------------------------------
+     Stat cards — the numbers are the point
+     --------------------------------------------------------------- */
+  .stat-grid {
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+    margin-bottom: 12px;
+  }
+  .stat {
+    padding: 11px 13px;
+    gap: 3px;
+    border-radius: 6px;
+    box-shadow: none;
+    border-color: #E3E6EA;
+  }
+  .stat.clickable:hover {
+    border-color: #C7CDD6;
+    box-shadow: 0 1px 3px rgba(16,24,40,.07);
+    transform: none;                       /* no lift; this is a data tile */
+  }
+  .stat-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+    color: #71809A;
+    gap: 6px;
+  }
+  .stat-label .ico { width: 21px; height: 21px; border-radius: 4px; }
+  .stat-label .ico svg { width: 12px; height: 12px; }
+  .stat-value {
+    font-size: 22px;
+    letter-spacing: -.025em;
+    line-height: 1.15;
+  }
+  .stat-delta { font-size: 11.5px; }
+
+  /* ---------------------------------------------------------------
+     Tables — the core of a back-office tool
+     --------------------------------------------------------------- */
+  table.tbl { font-size: 12.5px; }
+  table.tbl thead th {
+    padding: 7px 12px;
+    font-size: 10.5px;
+    letter-spacing: .055em;
+    background: #F7F8FA;
+    color: #6B7A90;
+    border-bottom-color: #E3E6EA;
+  }
+  table.tbl tbody td { padding: 7px 12px; }
+  table.tbl tbody tr:hover { background: #F7F9FC; }
+
+  /* Zebra striping aids scanning across wide rows */
+  table.tbl tbody tr:nth-child(even) { background: #FCFCFD; }
+  table.tbl tbody tr:nth-child(even):hover { background: #F7F9FC; }
+
+  table.tbl tfoot td {
+    padding: 8px 12px;
+    background: #F7F8FA;
+    border-top-color: #D3D9E0;
+  }
+
+  /* Inline row actions stay compact */
+  table.tbl .row-actions .btn { padding: 3px 7px; font-size: 11.5px; min-height: 0; }
+  table.tbl .row-actions .btn svg { width: 13px; height: 13px; }
+
+  /* ---------------------------------------------------------------
+     Pills — smaller, squarer, less "app badge"
+     --------------------------------------------------------------- */
+  .pill {
+    padding: 1px 7px;
+    font-size: 10.5px;
+    border-radius: 3px;
+    font-weight: 650;
+    letter-spacing: .01em;
+  }
+  .pill .dot { width: 5px; height: 5px; }
+
+  /* ---------------------------------------------------------------
+     Buttons
+     --------------------------------------------------------------- */
+  .btn { padding: 6px 12px; font-size: 12.5px; border-radius: 4px; }
+  .btn-sm { padding: 3px 8px; font-size: 11.5px; }
+  .btn-lg { padding: 9px 15px; font-size: 13.5px; }
+
+  /* ---------------------------------------------------------------
+     Forms
+     --------------------------------------------------------------- */
+  .field { margin-bottom: 11px; }
+  .field label { font-size: 11.5px; margin-bottom: 4px; }
+  .input, .select, .textarea {
+    padding: 6px 9px;
+    font-size: 12.5px;
+    border-radius: 4px;
+    border-color: #D5DAE1;
+  }
+  .form-grid { gap: 0 12px; }
+
+  /* ---------------------------------------------------------------
+     Alert rows — list density
+     --------------------------------------------------------------- */
+  .alert-row { padding: 8px 13px; gap: 9px; }
+  .alert-row .ico { width: 26px; height: 26px; border-radius: 5px; }
+  .alert-row .ico svg { width: 13px; height: 13px; }
+  .alert-row .body .t { font-size: 12.5px; }
+  .alert-row .body .s { font-size: 11.5px; }
+
+  /* ---------------------------------------------------------------
+     Segmented control
+     --------------------------------------------------------------- */
+  .seg { border-radius: 4px; padding: 2px; }
+  .seg button { padding: 4px 10px; font-size: 12px; border-radius: 3px; }
+
+  /* ---------------------------------------------------------------
+     Modals
+     --------------------------------------------------------------- */
+  .modal { border-radius: 8px; }
+  .modal-head { padding: 12px 16px; }
+  .modal-head .h2 { font-size: 15px; }
+  .modal-body { padding: 16px; }
+  .modal-foot { padding: 11px 16px; border-radius: 0 0 8px 8px; }
+
+  /* ---------------------------------------------------------------
+     Empty states inside panels should not waste vertical space
+     --------------------------------------------------------------- */
+  .card .empty { padding: 26px 18px; }
+  .card .empty .ico { width: 40px; height: 40px; margin-bottom: 7px; }
+  .card .empty .ico svg { width: 18px; height: 18px; }
+  .card .empty h3 { font-size: 13.5px; }
+  .card .empty p { font-size: 12px; }
+
+  /* Sidebar scrollbar recedes into the dark chrome */
+  .sidebar::-webkit-scrollbar { width: 8px; }
+  .sidebar::-webkit-scrollbar-thumb {
+    background: #33415A; border: 2px solid #111318; border-radius: 6px;
+  }
+  .sidebar::-webkit-scrollbar-thumb:hover { background: #445470; }
+}
+
+/* ==========================================================================
+   Dashboard row 2 — keep the two columns visually balanced
+   --------------------------------------------------------------------------
+   The left column (overdue list + aging) is naturally taller than the right
+   (reorder + low stock), which left a large dead gap under the right column.
+   Stretching the columns and letting the last panel in each grow absorbs the
+   difference, so both sides end level like a real dashboard grid.
+   ========================================================================== */
+@media (min-width: 901px) {
+  .dash-row-2 { align-items: stretch !important; }
+
+  .dash-row-2 > .col {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* The final panel in each column takes up the slack */
+  .dash-row-2 > .col > .card:last-child { flex: 1; }
+
+  /* An empty-state panel centres its message in that extra space */
+  .dash-row-2 > .col > .card:last-child > .card-body { height: 100%; }
+  .dash-row-2 > .col > .card:last-child > .card-body > .empty {
+    height: 100%;
+    justify-content: center;
+  }
+}
+
+/* Very wide screens: three columns keeps line lengths sensible */
+@media (min-width: 1700px) {
+  .dash-row-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ==========================================================================
+   Party ledger — expanded purchase detail
+   --------------------------------------------------------------------------
+   Shows exactly what a party bought on a bill, inline, without leaving the
+   ledger. Inset and tinted so it reads as detail belonging to the row above
+   rather than as another top-level table.
+   ========================================================================== */
+.items-detail-row > td { background: #F7F9FC; }
+
+.items-detail {
+  padding: 10px 14px 12px 34px;
+  border-left: 3px solid var(--accent);
+  background: #F7F9FC;
+}
+
+.items-detail-tbl {
+  background: var(--surface);
+  border: 1px solid #E3E6EA;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.items-detail-tbl thead th {
+  background: #FAFBFC;
+  font-size: 10px;
+  padding: 5px 10px;
+}
+.items-detail-tbl tbody td { padding: 5px 10px; font-size: 12.5px; }
+/* No zebra inside the detail table — it is short and already inset */
+.items-detail-tbl tbody tr:nth-child(even) { background: transparent; }
+.items-detail-tbl tbody tr:hover { background: #F7F9FC; }
+.items-detail-tbl tfoot td {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: #FAFBFC;
+  border-top: 1px solid #E3E6EA;
+}
+
+.items-detail-actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+@media (max-width: 900px) {
+  .items-detail { padding: 10px; border-left-width: 2px; }
+}
+
+/* ==========================================================================
+   Party account statement (khata) — every entry as its own line
+   ========================================================================== */
+
+/* Entry types are tinted so bills, receipts and corrections separate at a glance,
+   always alongside a text label — colour is never the only signal. */
+.stmt-tbl tbody tr.stmt-bill     td { border-left: 0; }
+.stmt-tbl tbody tr.stmt-payment  { background: #F6FCF8 !important; }
+.stmt-tbl tbody tr.stmt-advance  { background: #F6FCF8 !important; }
+.stmt-tbl tbody tr.stmt-return   { background: #FFFBF4 !important; }
+.stmt-tbl tbody tr.stmt-reversal,
+.stmt-tbl tbody tr.stmt-bounced  { background: #FEF7F7 !important; }
+.stmt-tbl tbody tr.stmt-void,
+.stmt-tbl tbody tr.stmt-info     { background: #FAFAFB !important; color: var(--text-muted); }
+
+.stmt-tbl tbody tr:hover { background: #EFF4FB !important; }
+
+/* Correction and note rows carry no money, so they read as annotations */
+.stmt-tbl tbody tr.stmt-reversal td,
+.stmt-tbl tbody tr.stmt-bounced td,
+.stmt-tbl tbody tr.stmt-info td,
+.stmt-tbl tbody tr.stmt-void td { font-style: italic; }
+
+.stmt-tbl tbody td { vertical-align: top; }
+.stmt-tbl tbody td .small.muted { margin-top: 1px; line-height: 1.35; }

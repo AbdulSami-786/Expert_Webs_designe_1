@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+
+# Private shop data (customer names, balances) - never commit
+old data/
