@@ -926,7 +926,7 @@ tr.age-30 { background: #FEF2F260; }
 /* ---- New Bill: item picker grid ---- */
 .item-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(206px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));   /* three cards in a row */
   gap: 12px;
 }
 .item-tile {
@@ -1035,3 +1035,7 @@ tr.age-30 { background: #FEF2F260; }
   .item-tile .inbill { top: auto; bottom: 8px; right: 8px; }
   .item-tile.on .add { display: none; }
 }
+
+/* New Bill: a line shows its item's name (no search box) until "Change" is pressed */
+.line-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 36px; }
+.line-name-text { font-weight: 650; font-size: 14px; }

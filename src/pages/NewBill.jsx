@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Plus, Trash2, History, Save, AlertTriangle, UserPlus, PackagePlus,
-  Wallet, CreditCard, X, CalendarClock,
+  Wallet, CreditCard, X, CalendarClock, Package,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
@@ -70,6 +70,10 @@ export default function NewBill() {
   const [gridQ, setGridQ] = useState('');
   const [gridCat, setGridCat] = useState('all');
   const [gridLimit, setGridLimit] = useState(30);
+  // The supplier this whole bill sells from ('' = any). New lines take their stock from it.
+  const [billSupplier, setBillSupplier] = useState(() => f0?.billSupplier ?? '');
+  // The line whose item is being changed (its search box is open).
+  const [changeKey, setChangeKey] = useState(null);
 
   const [showParty, setShowParty] = useState(false);
   const [showItem, setShowItem] = useState(false);
@@ -98,6 +102,8 @@ export default function NewBill() {
     setDueDate(editingBill.dueDate);
     setNote(editingBill.note || '');
     setPending(editingBill.delivery === 'pending');
+    const sids = [...new Set(data.billItems.filter((bi) => bi.billId === editingBill.id).map((bi) => bi.supplierId || ''))];
+    setBillSupplier(sids.length === 1 ? sids[0] : '');
     setLines(
       data.billItems
         .filter((bi) => bi.billId === editingBill.id)
@@ -141,6 +147,49 @@ export default function NewBill() {
   };
   const supplierCost = (itemId, supplierId) => (supplierId
     ? (supStock.get(itemId) || []).find((x) => x.supplierId === supplierId)?.cost : undefined);
+
+  /** Suppliers that still hold stock, for the bill-level "Sell from supplier" choice. */
+  const supplierOptions = useMemo(() => {
+    const m = new Map();
+    supStock.forEach((list) => list.forEach((x) => {
+      const cur = m.get(x.supplierId) || { id: x.supplierId, name: x.name, items: 0, qty: 0 };
+      cur.items += 1;
+      cur.qty = r2(cur.qty + x.available);
+      m.set(x.supplierId, cur);
+    }));
+    return [...m.values()].sort((x, y) => x.name.localeCompare(y.name));
+  }, [supStock]);
+  /** What a supplier holds of an item, or null. */
+  const heldBy = (itemId, supplierId) => (supStock.get(itemId) || []).find((x) => x.supplierId === supplierId) || null;
+  /** The supplier a new line sells from: the bill's choice when it holds the item, else the item's only supplier. */
+  const supplierFor = (itemId) => (billSupplier && heldBy(itemId, billSupplier) ? billSupplier : defaultSupplier(itemId));
+
+  /* ---------------- Quantity limit ----------------
+     A bill can never take more of an item than is in stock: this supplier's holding when the line
+     names one, otherwise the item's whole stock - less what the OTHER lines of this bill already
+     take. In the line's own unit (a line in Bags is converted). */
+  const maxQty = (line, all = lines) => {
+    const item = data.items.find((i) => i.id === line.itemId);
+    if (!item) return Infinity;
+    const pool = line.supplierId
+      ? (heldBy(line.itemId, line.supplierId)?.available ?? 0)
+      : itemStock(line.itemId, stockData);
+    const factor = unitFactor(item, line.unit) || 1;
+    const others = all
+      .filter((o) => o.key !== line.key && o.itemId === line.itemId
+        && (!line.supplierId || o.supplierId === line.supplierId))
+      .reduce((t, o) => t + (Number(o.qty) || 0) * (unitFactor(item, o.unit) || 1), 0);
+    return Math.max(0, Math.floor(((pool - others) / factor) * 100) / 100);
+  };
+  /** The message when a quantity is over the limit. */
+  const limitMsg = (line, max) => {
+    const item = data.items.find((i) => i.id === line.itemId);
+    const from = line.supplierId ? ` from ${heldBy(line.itemId, line.supplierId)?.name
+      || data.suppliers.find((x) => x.id === line.supplierId)?.name || 'this supplier'}` : '';
+    return max > 0
+      ? `Only ${max} ${line.unit || item?.baseUnit || ''} of ${item?.name || 'this item'} in stock${from}`
+      : `${item?.name || 'This item'} is sold out${from} - it cannot be added`;
+  };
 
   /* Due date follows the party's own default credit days (FR-8) */
   useEffect(() => {
@@ -192,11 +241,18 @@ export default function NewBill() {
     const item = data.items.find((i) => i.id === itemId);
     const last = itemId && partyId ? lastPriceFor(partyId, itemId) : null;
     const key = uid('l');
-    const supplierId = itemId ? defaultSupplier(itemId) : '';
+    const supplierId = itemId ? supplierFor(itemId) : '';
+    let startQty = 1;
+    if (itemId) {
+      const probe = { key: '__new', itemId, supplierId, unit: last?.unit || item?.baseUnit || 'Piece' };
+      const room = maxQty(probe);
+      if (room <= 0) { toast(limitMsg(probe, room), 'error'); return null; }
+      startQty = Math.min(1, room);
+    }
     setLines((ls) => [...ls, {
       key,
       itemId,
-      qty: '1',
+      qty: String(startQty),
       price: last ? String(last.price) : '',
       unit: last?.unit || item?.baseUnit || 'Piece',
       costPriceAtSale: supplierCost(itemId, supplierId) ?? item?.costPrice ?? 0,
@@ -256,8 +312,13 @@ export default function NewBill() {
   const pickItem = (key, itemId) => {
     const item = data.items.find((i) => i.id === itemId);
     const last = partyId ? lastPriceFor(partyId, itemId) : null;
-    const supplierId = defaultSupplier(itemId);
+    const supplierId = supplierFor(itemId);
+    const cur = lines.find((l) => l.key === key);
+    const probe = { key, itemId, supplierId, unit: last?.unit || item?.baseUnit || 'Piece' };
+    const room = maxQty(probe);
+    if (room <= 0) { toast(limitMsg(probe, room), 'error'); return; }
     setLine(key, {
+      qty: String(Math.min(Number(cur?.qty) || 1, room)),
       itemId,
       price: last ? String(last.price) : '',
       unit: last?.unit || item?.baseUnit || 'Piece',
@@ -271,9 +332,14 @@ export default function NewBill() {
 
   /** Tapping a tile adds the item, or one more of it if it is already on the bill. */
   const addFromTile = (itemId) => {
-    const existing = lines.find((l) => l.itemId === itemId);
-    if (existing) setLine(existing.key, { qty: String((Number(existing.qty) || 0) + 1) });
-    else addLine(itemId);
+    // One more of the same item - from the same supplier when the bill has chosen one.
+    const existing = lines.find((l) => l.itemId === itemId && (!billSupplier || l.supplierId === billSupplier));
+    if (existing) {
+      const next = (Number(existing.qty) || 0) + 1;
+      const max = maxQty(existing);
+      if (next > max + 0.0001) { toast(limitMsg(existing, max), 'error'); return; }
+      setLine(existing.key, { qty: String(next) });
+    } else addLine(itemId);
   };
 
   const gridCategories = useMemo(
@@ -284,11 +350,27 @@ export default function NewBill() {
     const t = gridQ.trim().toLowerCase();
     return activeItems
       .filter((i) => gridCat === 'all' || i.category === gridCat)
+      .filter((i) => !billSupplier || heldBy(i.id, billSupplier))
       .filter((i) => !t || `${i.name} ${i.category || ''}`.toLowerCase().includes(t)
         || (supStock.get(i.id) || []).some((x) => x.name.toLowerCase().includes(t)))
       // Items in stock first, then by name.
       .sort((a, b) => ((onHand.get(b.id) > 0) - (onHand.get(a.id) > 0)) || a.name.localeCompare(b.name));
-  }, [activeItems, gridQ, gridCat, onHand, supStock]);
+  }, [activeItems, gridQ, gridCat, onHand, supStock, billSupplier]);
+
+  // Lines already on the bill that the chosen supplier could supply instead.
+  const movable = billSupplier
+    ? lines.filter((l) => l.itemId && l.supplierId !== billSupplier && heldBy(l.itemId, billSupplier))
+    : [];
+  const useSupplierForAll = () => {
+    setLines((ls) => ls.map((l) => {
+      const h = l.itemId ? heldBy(l.itemId, billSupplier) : null;
+      if (!h) return l;
+      const factor = unitFactor(data.items.find((i) => i.id === l.itemId), l.unit) || 1;
+      const cap = Math.floor((h.available / factor) * 100) / 100;
+      return { ...l, supplierId: billSupplier, costPriceAtSale: h.cost,
+               qty: (Number(l.qty) || 0) > cap ? String(cap) : l.qty };
+    }));
+  };
 
   /**
    * Price-change alert (FR-5): warn when an entered price deviates from this
@@ -332,13 +414,26 @@ export default function NewBill() {
     [partyId, data.partyAdvances]
   );
 
+  /* Editing a bill that already has payments: that money stays on the bill, so only what is LEFT
+     after it can be unpaid. Without this, adding Rs 5 to a paid Rs 10 bill showed all Rs 15 as credit.
+     An uncleared cheque counts: it pays the bill when it clears. */
+  const prevPayments = useMemo(() => (editingBill
+    ? data.payments.filter((p) => p.billId === editingBill.id && !p.reversed)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    : []), [editingBill, data.payments]);
+  const alreadyPaid = useMemo(() => {
+    if (!editingBill) return 0;
+    const st = billState(editingBill, data);
+    return r2(st.paid + st.pendingCheques);
+  }, [editingBill, data]);
+
   // Anything not covered by a payment or advance automatically becomes Credit (FR-7)
   const creditAmount = useMemo(
-    () => r2(Math.max(0, totals.total - paidNow - Number(applyAdvance || 0))),
-    [totals.total, paidNow, applyAdvance]
+    () => r2(Math.max(0, totals.total - alreadyPaid - paidNow - Number(applyAdvance || 0))),
+    [totals.total, alreadyPaid, paidNow, applyAdvance]
   );
 
-  const overpaid = r2(paidNow + Number(applyAdvance || 0) - totals.total);
+  const overpaid = r2(alreadyPaid + paidNow + Number(applyAdvance || 0) - totals.total);
 
   // The instalment plan, when on and there is credit to spread.
   const installPlan = useMemo(() => {
@@ -382,7 +477,7 @@ export default function NewBill() {
   /** Fill the remaining balance into this payment row. */
   const fillRemaining = (key) => {
     const others = r2(pays.filter((p) => p.key !== key).reduce((s, p) => s + (Number(p.amount) || 0), 0));
-    const remaining = r2(Math.max(0, totals.total - others - Number(applyAdvance || 0)));
+    const remaining = r2(Math.max(0, totals.total - alreadyPaid - others - Number(applyAdvance || 0)));
     setPay(key, { amount: String(remaining) });
   };
 
@@ -391,9 +486,9 @@ export default function NewBill() {
   /** Everything the form holds for one bill, as a plain object. */
   const snapshot = useCallback(() => ({
     partyId, date, lines, pays, dueDate, applyAdvance, note, pending,
-    installOn, installCount, installFirst, installEvery,
+    installOn, installCount, installFirst, installEvery, billSupplier,
   }), [partyId, date, lines, pays, dueDate, applyAdvance, note, pending,
-    installOn, installCount, installFirst, installEvery]);
+    installOn, installCount, installFirst, installEvery, billSupplier]);
 
   const restore = useCallback((f) => {
     setPartyId(f?.partyId ?? '');
@@ -408,6 +503,7 @@ export default function NewBill() {
     setInstallCount(f?.installCount ?? 3);
     setInstallFirst(f?.installFirst ?? addDays(todayISO(), 30));
     setInstallEvery(f?.installEvery ?? 'monthly');
+    setBillSupplier(f?.billSupplier ?? '');
   }, [settings.defaultCreditDays]);
 
   /* Keep every unsaved tab in this device's storage as it changes. A saved bill
@@ -533,6 +629,11 @@ export default function NewBill() {
     if (busy) return; // guard: a second click must not save the bill twice
     if (!partyId) return toast('Select a party first', 'error');
     if (!validLines.length) return toast('Add at least one item', 'error');
+    if (overpaid > 0.004) {
+      return toast(`Payment is ${money(overpaid)} more than the bill needs - reduce a payment line`, 'error');
+    }
+    const over = validLines.find((l) => (Number(l.qty) || 0) > maxQty(l) + 0.0001);
+    if (over) return toast(`${limitMsg(over, maxQty(over))} - reduce the quantity`, 'error');
     if (installOn && !editingBill && creditAmount > 0 && !installPlan) {
       return toast('Instalments: enter at least 2 instalments and the first due date', 'error');
     }
@@ -549,7 +650,9 @@ export default function NewBill() {
         })),
         payments: pays
           .filter((p) => Number(p.amount) > 0)
-          .map((p) => ({ method: p.method, amount: Number(p.amount), cheque: p.cheque, note: '' })),
+          // Money handed over while editing an old bill is received today, not on the bill's date.
+          .map((p) => ({ method: p.method, amount: Number(p.amount), cheque: p.cheque, note: '',
+                         ...(editingBill ? { date: todayISO() } : {}) })),
         advanceApplied: Number(applyAdvance) || 0,
         subtotal: totals.subtotal,
         roundOff: totals.roundOff,
@@ -686,6 +789,15 @@ export default function NewBill() {
                 <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
               </Field>
 
+              <Field label="Sell from supplier" hint="Items you add come out of this supplier's stock">
+                <Select value={billSupplier} onChange={(e) => { setBillSupplier(e.target.value); setGridLimit(30); }}>
+                  <option value="">Any supplier (oldest stock first)</option>
+                  {supplierOptions.map((o) => (
+                    <option key={o.id} value={o.id}>{o.name} — {o.items} items in stock</option>
+                  ))}
+                </Select>
+              </Field>
+
               {creditAmount > 0 && !installOn && (
                 <Field label="Credit due date" hint="Editable — defaults from this party's terms">
                   <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
@@ -729,6 +841,19 @@ export default function NewBill() {
               </Select>
             }
           >
+            {billSupplier && (
+              <div className="note" style={{ marginBottom: 10 }}>
+                <Package size={14} />
+                <span style={{ flex: 1 }}>
+                  Selling from <strong>{supplierOptions.find((o) => o.id === billSupplier)?.name || 'this supplier'}</strong> —
+                  only its stock is shown, and what you add is taken from it.
+                </span>
+                {movable.length > 0 && (
+                  <Button size="sm" onClick={useSupplierForAll}>Use for {movable.length} line{movable.length === 1 ? '' : 's'} already added</Button>
+                )}
+                <Button size="sm" onClick={() => setBillSupplier('')}>Show all</Button>
+              </div>
+            )}
             <div className="mb-2">
               <SearchBar value={gridQ} onChange={(v) => { setGridQ(v); setGridLimit(30); }}
                          placeholder="Search item, category or supplier…" />
@@ -739,8 +864,9 @@ export default function NewBill() {
               <>
                 <div className="item-grid">
                   {gridItems.slice(0, gridLimit).map((i) => {
-                    const stockQty = onHand.get(i.id) ?? 0;
-                    const sups = supStock.get(i.id) || [];
+                    const held = billSupplier ? heldBy(i.id, billSupplier) : null;
+                    const stockQty = billSupplier ? (held?.available ?? 0) : (onHand.get(i.id) ?? 0);
+                    const sups = billSupplier ? (held ? [held] : []) : (supStock.get(i.id) || []);
                     const pp = partyId ? lastPriceFor(partyId, i.id) : null;
                     const price = pp?.price ?? latestSale.get(i.id)?.price;
                     const inBill = lines.filter((l) => l.itemId === i.id)
@@ -849,6 +975,8 @@ export default function NewBill() {
                     ? (chosen?.name || data.suppliers.find((x) => x.id === l.supplierId)?.name || 'supplier') : '';
                   // What this line can draw on: one supplier's stock, or everything.
                   const avail = l.supplierId ? (chosen?.available ?? 0) : stock;
+                  // The most this line can take, so the box cannot be raised past what is in stock.
+                  const max = l.itemId ? maxQty(l) : Infinity;
 
                   // Units available for this line: base + alt if a conversion exists
                   const unitOpts = item
@@ -860,19 +988,30 @@ export default function NewBill() {
                       <div className="row line-head" style={{ gap: 8, marginBottom: 8 }}>
                         <span className="small muted nowrap line-no" style={{ width: 20 }}>{idx + 1}.</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <TypeAhead
-                            items={activeItems}
-                            value={l.itemId}
-                            // Only the line awaiting focus publishes its input,
-                            // so the ref cannot end up pointing at another row.
-                            focusRef={l.key === focusLineKey ? itemInputRef : null}
-                            onChange={(id) => id && pickItem(l.key, id)}
-                            getLabel={(i) => i.name}
-                            getSub={(i) => `${i.category || 'Uncategorised'} · ${i.baseUnit}`}
-                            placeholder="Search item…"
-                            onAddNew={(name) => { setPrefillName(name); setShowItem(true); }}
-                            addNewLabel="Add new item"
-                          />
+                          {l.itemId && changeKey !== l.key ? (
+                            <div className="line-name">
+                              <span className="line-name-text">{item?.name || 'Item'}</span>
+                              <span className="small muted">{item?.category || 'Uncategorised'} · {item?.baseUnit}</span>
+                              <button type="button" className="btn btn-ghost btn-sm"
+                                      onClick={() => { setChangeKey(l.key); setFocusLineKey(l.key); }}>
+                                Change
+                              </button>
+                            </div>
+                          ) : (
+                            <TypeAhead
+                              items={activeItems}
+                              value={l.itemId}
+                              // Only the line awaiting focus publishes its input,
+                              // so the ref cannot end up pointing at another row.
+                              focusRef={l.key === focusLineKey ? itemInputRef : null}
+                              onChange={(id) => { if (id) { pickItem(l.key, id); setChangeKey(null); } }}
+                              getLabel={(i) => i.name}
+                              getSub={(i) => `${i.category || 'Uncategorised'} · ${i.baseUnit}`}
+                              placeholder="Search item…"
+                              onAddNew={(name) => { setPrefillName(name); setShowItem(true); }}
+                              addNewLabel="Add new item"
+                            />
+                          )}
                         </div>
                         <button className="btn btn-ghost btn-icon" onClick={() => removeLine(l.key)}
                                 aria-label="Remove line" title="Remove line">
@@ -882,14 +1021,29 @@ export default function NewBill() {
 
                       <div className="row wrap line-fields" style={{ gap: 8, paddingLeft: 28 }}>
                         <div style={{ width: 92 }}>
-                          <label className="small muted">Qty</label>
+                          <label className="small muted">
+                            Qty{Number.isFinite(max) && <span> (max {max})</span>}
+                          </label>
                           <Input type="number" min="0" step="any" value={l.qty}
-                                 onChange={(e) => setLine(l.key, { qty: e.target.value })} />
+                                 max={Number.isFinite(max) ? max : undefined}
+                                 onChange={(e) => {
+                                   const raw = e.target.value;
+                                   if (raw !== '' && Number(raw) > max + 0.0001) {
+                                     setLine(l.key, { qty: String(max) });
+                                     toast(limitMsg(l, max), 'error');
+                                   } else setLine(l.key, { qty: raw });
+                                 }} />
                         </div>
 
                         <div style={{ width: 112 }}>
                           <label className="small muted">Unit</label>
-                          <Select value={l.unit} onChange={(e) => setLine(l.key, { unit: e.target.value })}
+                          <Select value={l.unit}
+                                  onChange={(e) => {
+                                    // A different unit changes how much is allowed.
+                                    const unit = e.target.value;
+                                    const cap = maxQty({ ...l, unit });
+                                    setLine(l.key, { unit, qty: (Number(l.qty) || 0) > cap ? String(cap) : l.qty });
+                                  }}
                                   options={unitOpts} />
                         </div>
 
@@ -905,9 +1059,12 @@ export default function NewBill() {
                             <Select value={l.supplierId || ''}
                                     onChange={(e) => {
                                       const sid = e.target.value;
+                                      // A different supplier holds a different amount.
+                                      const cap = maxQty({ ...l, supplierId: sid });
                                       setLine(l.key, {
                                         supplierId: sid,
                                         costPriceAtSale: supplierCost(l.itemId, sid) ?? item?.costPrice ?? 0,
+                                        qty: (Number(l.qty) || 0) > cap ? String(cap) : l.qty,
                                       });
                                     }}>
                               <option value="">Any supplier (oldest first)</option>
@@ -1014,6 +1171,12 @@ export default function NewBill() {
               <span className="spacer" />
               <span className="money" style={{ fontSize: 21 }}>{money(totals.total)}</span>
             </div>
+            {editingBill && alreadyPaid > 0 && (
+              <div style={{ marginTop: 6 }}>
+                <SumRow label="Already paid on this bill" value={alreadyPaid} muted />
+                <SumRow label="Balance still to pay" value={Math.max(0, r2(totals.total - alreadyPaid))} />
+              </div>
+            )}
             <div className="small muted mt-1">
               Rounding: {settings.roundingRule === 'exact' ? 'exact' : `nearest ${settings.roundingRule.replace('nearest', '')}`}
               {' '}(change in Settings)
@@ -1022,7 +1185,9 @@ export default function NewBill() {
 
           <Card
             title="Payment"
-            subtitle="Split across any methods — the remainder becomes Credit"
+            subtitle={editingBill && alreadyPaid > 0
+              ? 'Money already paid stays on the bill. Add only a NEW payment — what is left becomes Credit'
+              : 'Split across any methods — the remainder becomes Credit'}
             actions={<Button size="sm" icon={Plus} onClick={addPay}>Add method</Button>}
           >
             {/* Apply party advance (FR-9).
@@ -1061,6 +1226,31 @@ export default function NewBill() {
               )
             )}
 
+            {editingBill && prevPayments.length > 0 && (
+              <div style={{ marginBottom: 12, padding: '9px 11px', background: '#F8FAF8',
+                            border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>
+                <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Already paid on this bill</div>
+                {prevPayments.map((p) => {
+                  const chq = data.cheques.find((c) => c.paymentId === p.id);
+                  return (
+                    <div key={p.id} className="row" style={{ gap: 8, padding: '3px 0' }}>
+                      <span className="small muted nowrap">{fmtDate(p.date)}</span>
+                      <span className="small">
+                        {p.method}{chq && chq.status !== 'cleared' ? ` (cheque ${chq.status})` : ''}
+                      </span>
+                      <span className="spacer" />
+                      <Money value={p.amount} />
+                    </div>
+                  );
+                })}
+                <div className="row" style={{ gap: 8, paddingTop: 5, marginTop: 4, borderTop: '1px solid var(--border)' }}>
+                  <span className="small" style={{ fontWeight: 600 }}>Total already paid</span>
+                  <span className="spacer" />
+                  <Money value={alreadyPaid} />
+                </div>
+              </div>
+            )}
+
             {pays.map((p) => (
               <div key={p.key} style={{ marginBottom: 12 }}>
                 <div className="row pay-row" style={{ gap: 7 }}>
@@ -1090,7 +1280,8 @@ export default function NewBill() {
             ))}
 
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 11, marginTop: 4 }}>
-              <SumRow label="Paid now" value={paidNow} muted />
+              {editingBill && alreadyPaid > 0 && <SumRow label="Paid before" value={alreadyPaid} muted />}
+              <SumRow label={editingBill && alreadyPaid > 0 ? 'Paying now' : 'Paid now'} value={paidNow} muted />
               {Number(applyAdvance) > 0 && <SumRow label="From advance" value={Number(applyAdvance)} muted />}
 
               {creditAmount > 0 ? (

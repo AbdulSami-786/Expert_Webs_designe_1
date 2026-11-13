@@ -299,6 +299,8 @@ export const api = {
 
   // Returns
   addReturn:      (ret)         => call('addReturn', ret),
+  // Hand money back for goods returned from a paid bill.
+  addRefund:      (r)           => call('addRefund', r),
 
   // Cheques
   saveCheque:     (cheque)      => call('saveCheque', cheque),

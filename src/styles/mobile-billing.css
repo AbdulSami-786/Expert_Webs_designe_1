@@ -18,6 +18,19 @@
 
 @media (min-width: 901px) {
   .bill-layout { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }
+
+  /* The right-hand side (totals, payment, Save) stays in view under the top bar while the
+     long item list on the left scrolls. If it is taller than the screen it scrolls on its own
+     rather than hiding the Save button below the fold. (align-items: start, above, is what
+     lets a grid child be sticky.) */
+  .bill-layout > .col:last-child {
+    position: sticky;
+    top: calc(var(--topbar-h) + 12px);
+    max-height: calc(100vh - var(--topbar-h) - 24px);
+    overflow-y: auto;
+    padding: 1px 2px 2px 1px;          /* keeps the cards' edges from being clipped */
+    scrollbar-width: thin;
+  }
 }
 
 @media (max-width: 900px) {

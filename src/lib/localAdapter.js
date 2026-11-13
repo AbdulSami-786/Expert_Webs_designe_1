@@ -938,7 +938,7 @@ async function perform(action, payload = {}) {
         if (!(Number(p.amount) > 0)) return;
         const pay = {
           id: uid('pay'), billId: bill.id, partyId: bill.partyId, method: p.method,
-          amount: r2(p.amount), date: bill.date, note: p.note || '', reversed: false,
+          amount: r2(p.amount), date: p.date || bill.date, note: p.note || '', reversed: false,
         };
         d.payments.push(pay);
 
@@ -1341,14 +1341,58 @@ async function perform(action, payload = {}) {
           + `(${valueLeft.toFixed(2)}).`);
       }
 
+      // Money handed back with the return (optional): at most what the customer has paid
+      // beyond what the bill is worth once these goods are taken off it.
+      const refund = r2(rt.refundAmount);
+      if (refund < 0) throw new Error('Refund cannot be negative');
+      if (refund > 0) {
+        const st = billState(bill, d);
+        const allowed = r2(Math.max(0, st.paid - r2(st.net - value)));
+        if (refund > allowed + 0.004) {
+          throw new Error(`Refund cannot be more than ${allowed.toFixed(2)} - that is all the customer has `
+            + 'paid beyond what the bill is worth after this return.');
+        }
+      }
+
+      const when = rt.date || todayISO();
       const rec = {
         id: uid('ret'), billId: rt.billId, itemId: rt.itemId, qty: Number(rt.qty) || 0,
         valueAdjusted: r2(rt.valueAdjusted), restock: Boolean(rt.restock),
-        date: rt.date || todayISO(), note: rt.note || '',
+        date: when, note: rt.note || '',
+        refundAmount: refund, refundMethod: refund > 0 ? (rt.refundMethod || 'Cash') : '',
+        refundDate: refund > 0 ? (rt.refundDate || when) : '',
       };
       d.returns.push(rec);
       logActivity(d, 'return', rec.id, 'create',
-        `Return against Bill ${bill.billNo} — value ${rec.valueAdjusted}`);
+        `Return against Bill ${bill.billNo} — value ${rec.valueAdjusted}`
+        + (refund > 0 ? `, refunded ${refund} (${rec.refundMethod})` : ''));
+      save();
+      return rec;
+    }
+
+    /* Hand money back to a party for goods they returned from a bill they had paid. It is kept on
+       the bill's return record, so the ledger shows it as a refund and the till pays it out. */
+    case 'addRefund': {
+      const p = payload;
+      const bill = d.bills.find((x) => x.id === p.billId);
+      if (!bill) throw new Error('Bill not found');
+      const amount = r2(p.amount);
+      if (!(amount > 0)) throw new Error('Enter a refund amount');
+      const rets = d.returns.filter((r) => r.billId === bill.id)
+        .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
+      if (!rets.length) throw new Error('Only a bill that has a return can be refunded.');
+      const st = billState(bill, d);
+      if (amount > r2(st.overpaid) + 0.004) {
+        throw new Error(`Refund cannot be more than ${r2(st.overpaid).toFixed(2)} - that is all this bill was overpaid by.`);
+      }
+      // The latest return that has not been refunded yet; else add to the latest one.
+      const rec = rets.find((r) => !(Number(r.refundAmount) > 0)) || rets[0];
+      rec.refundAmount = r2((Number(rec.refundAmount) || 0) + amount);
+      rec.refundMethod = p.method || 'Cash';
+      rec.refundDate = p.date || todayISO();
+      touch(d, rec.id);
+      logActivity(d, 'return', rec.id, 'edit',
+        `Refunded ${amount} (${rec.refundMethod}) for Bill ${bill.billNo}${p.note ? ` — ${p.note}` : ''}`);
       save();
       return rec;
     }

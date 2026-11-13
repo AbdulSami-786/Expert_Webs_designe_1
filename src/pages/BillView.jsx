@@ -13,9 +13,10 @@ import {
 } from '../components/ui';
 import PaymentModal from '../components/forms/PaymentModal';
 import ReturnModal from '../components/forms/ReturnModal';
+import RefundModal from '../components/forms/RefundModal';
 import LineDeliveryModal, { DeliveredCount } from '../components/forms/LineDeliveryModal';
-import { deriveBills, billDelivery, lineDeliveredQty, installmentStatus } from '../lib/calc';
-import { money, fmtDate, fmtDateTime, waLink, totalQtyLabel } from '../lib/format';
+import { deriveBills, billDelivery, lineDeliveredQty, installmentStatus, partyUnappliedCredit } from '../lib/calc';
+import { money, fmtDate, fmtDateTime, waLink, totalQtyLabel, r2 } from '../lib/format';
 import { printBill, downloadBillPDF } from '../lib/exporters';
 
 export default function BillView() {
@@ -68,6 +69,16 @@ export default function BillView() {
     () => (bill ? data.returns.filter((r) => r.billId === bill.id) : []),
     [bill, data.returns]
   );
+
+  // Money the party paid beyond what this bill is now worth and has not been handed back (the
+  // minus on their ledger). Only what no other open bill of theirs has already absorbed.
+  const [refundOpen, setRefundOpen] = useState(false);
+  const refundDue = useMemo(() => {
+    if (!bill || !state) return 0;
+    const credit = partyUnappliedCredit(bill.partyId,
+      deriveBills(data.bills.filter((b) => b.partyId === bill.partyId), data));
+    return r2(Math.min(state.overpaid || 0, credit));
+  }, [bill, state, data]);
 
   const cheques = useMemo(
     () => (bill ? data.cheques.filter((c) => c.billId === bill.id) : []),
@@ -371,12 +382,20 @@ export default function BillView() {
           </Card>
 
           {returns.length > 0 && (
-            <Card title="Returns" tight>
+            <Card title="Returns" tight
+                  actions={refundDue > 0.004 ? (
+                    <Button size="sm" variant="primary" onClick={() => setRefundOpen(true)}>
+                      Refund {money(refundDue)}
+                    </Button>
+                  ) : undefined}
+                  subtitle={refundDue > 0.004
+                    ? `${money(refundDue)} was paid for goods that came back — hand it back to clear the minus on their ledger`
+                    : undefined}>
               <div className="table-wrap">
                 <table className="tbl">
                   <thead>
                     <tr><th>Date</th><th>Item</th><th className="r">Qty</th>
-                        <th>Restocked</th><th>Note</th><th className="r">Value</th></tr>
+                        <th>Restocked</th><th>Note</th><th className="r">Refunded</th><th className="r">Value</th></tr>
                   </thead>
                   <tbody>
                     {returns.map((r) => (
@@ -386,6 +405,11 @@ export default function BillView() {
                         <td className="r">{r.qty}</td>
                         <td>{r.restock ? <Pill status="paid" label="Yes" /> : <Pill status="voided" label="No" />}</td>
                         <td className="small muted">{r.note || '—'}</td>
+                        <td className="r small">
+                          {Number(r.refundAmount) > 0
+                            ? <>{money(r.refundAmount)}<div className="muted">{r.refundMethod}</div></>
+                            : <span className="muted">—</span>}
+                        </td>
                         <td className="r strong"><Money value={r.valueAdjusted} /></td>
                       </tr>
                     ))}
@@ -480,6 +504,7 @@ export default function BillView() {
       <PaymentModal open={payOpen} onClose={() => setPayOpen(false)}
                     bill={bill} state={state} party={party} />
 
+      <RefundModal open={refundOpen} onClose={() => setRefundOpen(false)} bill={bill} party={party} max={refundDue} />
       <ReturnModal open={retOpen} onClose={() => setRetOpen(false)}
                    bill={bill} party={party} />
 

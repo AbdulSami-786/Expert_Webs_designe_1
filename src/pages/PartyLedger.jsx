@@ -16,7 +16,7 @@ import {
   Plus, Download, Share2, Wallet, Send, Phone, Receipt, RotateCcw,
   Pencil, Ban, Copy, Trash2, MoreVertical, Printer, CheckCircle2,
   ChevronRight, ChevronDown, Package, ListOrdered, LayoutList, HandCoins, Search,
-  Lock, KeyRound, ShoppingCart, ArrowLeftRight,
+  Lock, KeyRound, ShoppingCart, ArrowLeftRight, Banknote,
 } from 'lucide-react';
 import { PartyLockScreen, PartyLockModal } from '../components/PartyLock';
 import { isLocked, isUnlocked, canOpen, relock } from '../lib/partyLock';
@@ -31,6 +31,7 @@ import AccountPaymentModal from '../components/forms/AccountPaymentModal';
 import EditPaymentModal from '../components/forms/EditPaymentModal';
 import PartyItemSearchModal from '../components/forms/PartyItemSearchModal';
 import ReturnModal from '../components/forms/ReturnModal';
+import RefundModal from '../components/forms/RefundModal';
 import PurchaseBillModal from '../components/forms/PurchaseBillModal';
 import SupplierPaymentModal from '../components/forms/SupplierPaymentModal';
 import BillReceiptModal from '../components/BillReceiptModal';
@@ -77,6 +78,8 @@ function PartyLedgerView({ onRelock }) {
   const [lockOpen, setLockOpen] = useState(false);
   const [payFor, setPayFor] = useState(null);
   const [returnFor, setReturnFor] = useState(null);
+  // Bill whose returned goods are being refunded (money handed back)
+  const [refundFor, setRefundFor] = useState(null);
   const [advanceOpen, setAdvanceOpen] = useState(false);
   // Payment against the whole account, allocated across bills oldest-first
   const [accountPayOpen, setAccountPayOpen] = useState(false);
@@ -147,6 +150,13 @@ function PartyLedgerView({ onRelock }) {
       pendingCheques: partyPendingCheques(id, data),
     };
   }, [bills, id, data]);
+
+  /** Money a bill's returned goods still owe back to the party: what it was overpaid by, capped by their
+      overall credit (an open bill of theirs may already have absorbed some). */
+  const refundableOf = (billId) => {
+    const b = bills.find((x) => x.id === billId);
+    return b ? r2(Math.min(b.overpaid || 0, totals.credit || 0)) : 0;
+  };
 
   // What the shop owes this party for goods bought from them (below zero:
   // money paid to them ahead), and the one figure that settles the account.
@@ -501,6 +511,12 @@ function PartyLedgerView({ onRelock }) {
                                       onClick={() => setReceiptFor(e.billId)}
                                       title="Open bill receipt" />
                             )}
+                            {/* A return from a bill they had paid leaves them a minus until the money goes back. */}
+                            {e.type === 'return' && refundableOf(e.billId) > 0.004 && (
+                              <Button size="sm" icon={Banknote}
+                                      onClick={() => setRefundFor(bills.find((b) => b.id === e.billId))}
+                                      title={`Hand ${money(refundableOf(e.billId))} back`}>Refund</Button>
+                            )}
                             {/* Corrections on the payment behind this line. A
                                 reversed payment is already a closed record, so
                                 it offers neither. */}
@@ -602,6 +618,12 @@ function PartyLedgerView({ onRelock }) {
                           <Button size="sm" icon={Receipt}
                                   onClick={(ev) => { ev.stopPropagation(); setReceiptFor(e.billId); }}>
                             View bill
+                          </Button>
+                        )}
+                        {e.type === 'return' && refundableOf(e.billId) > 0.004 && (
+                          <Button size="sm" icon={Banknote}
+                                  onClick={(ev) => { ev.stopPropagation(); setRefundFor(bills.find((b) => b.id === e.billId)); }}>
+                            Refund {money(refundableOf(e.billId))}
                           </Button>
                         )}
                         {e.paymentId && !e.reversed && (
@@ -709,6 +731,12 @@ function PartyLedgerView({ onRelock }) {
                             {b.due > 0 && b.status !== 'voided' && (
                               <button className="btn btn-primary btn-sm" onClick={() => setPayFor(b)}>
                                 Pay
+                              </button>
+                            )}
+                            {refundableOf(b.id) > 0.004 && (
+                              <button className="btn btn-primary btn-sm" onClick={() => setRefundFor(b)}
+                                      title="Hand the money for returned goods back">
+                                Refund {money(refundableOf(b.id))}
                               </button>
                             )}
                             {b.status !== 'voided' && (
@@ -1034,6 +1062,11 @@ function PartyLedgerView({ onRelock }) {
       <ReturnModal
         open={Boolean(returnFor)} onClose={() => setReturnFor(null)}
         bill={returnFor} party={party}
+      />
+
+      <RefundModal
+        open={Boolean(refundFor)} onClose={() => setRefundFor(null)}
+        bill={refundFor} party={party} max={refundFor ? refundableOf(refundFor.id) : 0}
       />
 
       <AdvanceModal

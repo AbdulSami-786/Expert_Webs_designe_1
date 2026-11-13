@@ -30,6 +30,15 @@ export function billTotals(lines, roundingRule = 'nearest1') {
   return { subtotal, roundOff: r2(total - subtotal), total: r2(total) };
 }
 
+/** Money handed back to the party for a bill's returned goods (a refund). */
+export function billRefunded(billId, returns = []) {
+  return r2(
+    returns
+      .filter((r) => r.billId === billId)
+      .reduce((s, r) => s + (Number(r.refundAmount) || 0), 0)
+  );
+}
+
 /** Total non-reversed payments recorded against a bill (FR-26: reversals offset). */
 export function billPaid(billId, payments = []) {
   return r2(
@@ -68,9 +77,11 @@ export function billState(bill, { payments = [], returns = [], cheques = [] } = 
   );
   const countsAsPaid = (p) => p.billId === bill.id && !p.reversed && !uncleared.has(p.id);
 
-  const paid = r2(
-    payments.filter(countsAsPaid).reduce((s, p) => s + (Number(p.amount) || 0), 0)
-  );
+  // Money handed back to the party for returned goods is no longer paid on this bill:
+  // without this, a paid bill that is returned and refunded would still look overpaid.
+  const refunded = billRefunded(bill.id, returns);
+  const paid = r2(Math.max(0,
+    payments.filter(countsAsPaid).reduce((s, p) => s + (Number(p.amount) || 0), 0) - refunded));
 
   // Recorded but not yet cleared. Kept separate from `paid` so screens can show
   // "Rs 1,000 due, Rs 1,000 in an uncleared cheque" rather than implying the
@@ -99,6 +110,7 @@ export function billState(bill, { payments = [], returns = [], cheques = [] } = 
     ...bill,
     gross,
     returned,
+    refunded,
     net,
     pendingCheques,
     delivery,
@@ -822,7 +834,7 @@ export function collectedPayments(payments = [], cheques = []) {
  * Pending cheques are excluded from cash until cleared (FR-29).
  */
 export function accountBalances(methods = [], {
-  payments = [], expenses = [], employeeTx = [], cheques = [], supplierPayments = [],
+  payments = [], expenses = [], employeeTx = [], cheques = [], supplierPayments = [], returns = [],
 } = {}) {
   const pendingOrBounced = new Set(
     cheques.filter((c) => c.status !== 'cleared' && c.paymentId).map((c) => c.paymentId)
@@ -849,7 +861,12 @@ export function accountBalances(methods = [], {
       .filter((sp) => (sp.method || 'Cash') === m)
       .reduce((s, sp) => s + (Number(sp.amount) || 0), 0);
 
-    const out = outExp + outSal + outSup;
+    // Money handed back to customers for returned goods.
+    const outRef = returns
+      .filter((r) => Number(r.refundAmount) > 0 && (r.refundMethod || 'Cash') === m)
+      .reduce((s, r) => s + (Number(r.refundAmount) || 0), 0);
+
+    const out = outExp + outSal + outSup + outRef;
     return { method: m, in: r2(inflow), out: r2(out), balance: r2(inflow - out) };
   });
 }
@@ -857,7 +874,7 @@ export function accountBalances(methods = [], {
 /** Full chronological transaction history for one method, with running balance. */
 export function accountLedger(method, {
   payments = [], expenses = [], employeeTx = [], cheques = [], parties = [], employees = [],
-  supplierPayments = [], suppliers = [],
+  supplierPayments = [], suppliers = [], returns = [], bills = [],
 } = {}) {
   const pending = new Set(
     cheques.filter((c) => c.status !== 'cleared' && c.paymentId).map((c) => c.paymentId)
@@ -900,6 +917,17 @@ export function accountLedger(method, {
       desc: `${sp.isAdvance ? 'Advance to supplier' : 'Paid to supplier'} ${supplierName(sp.supplierId)}${sp.note ? ` — ${sp.note}` : ''}`,
       relatedType: 'supplier', relatedId: sp.supplierId,
     }));
+
+  returns
+    .filter((r) => Number(r.refundAmount) > 0 && (r.refundMethod || 'Cash') === method)
+    .forEach((r) => {
+      const bill = bills.find((b) => b.id === r.billId);
+      rows.push({
+        id: `ref-${r.id}`, date: r.refundDate || r.date, direction: 'out', amount: r2(r.refundAmount),
+        desc: `Refund to ${partyName(bill?.partyId)} — return on Bill ${bill?.billNo || ''}`.trim(),
+        relatedType: 'refund', relatedId: r.billId,
+      });
+    });
 
   rows.sort((a, b) => new Date(a.date) - new Date(b.date) || String(a.id).localeCompare(String(b.id)));
 
@@ -1494,12 +1522,31 @@ export function partyStatement(partyId, data = {}, from = null, to = null) {
   returns.forEach((rt) => {
     const bill = billById.get(rt.billId);
     if (!bill || !within(rt.date)) return;
+    // Money handed back the same day belongs on this line: it must not leave a "-Rs 10" showing
+    // for a moment on a return that was refunded on the spot. A later refund is its own line.
+    const handed = (rt.refundDate || rt.date) === rt.date ? r2(rt.refundAmount) : 0;
     rows.push({
       id: `ret-${rt.id}`, date: rt.date, type: 'return', billId: rt.billId,
       ref: bill.billNo,
       title: `Return against Bill ${bill.billNo}`,
-      detail: `${itemName(rt.itemId)} × ${rt.qty}${rt.restock ? ' (restocked)' : ''}${rt.note ? ' · ' + rt.note : ''}`,
-      method: '', debit: 0, credit: r2(rt.valueAdjusted),
+      detail: `${itemName(rt.itemId)} × ${rt.qty}${rt.restock ? ' (restocked)' : ''}${rt.note ? ' · ' + rt.note : ''}`
+        + (handed > 0 ? ` · ${money2(handed)} handed back (${rt.refundMethod || 'Cash'})` : ''),
+      method: handed > 0 ? (rt.refundMethod || 'Cash') : '', debit: 0, credit: r2(r2(rt.valueAdjusted) - handed),
+    });
+  });
+
+  /* ---- Refunds: money handed back to the party for returned goods (debit) ---- */
+  returns.forEach((rt) => {
+    const amt = r2(rt.refundAmount);
+    const bill = billById.get(rt.billId);
+    const when = rt.refundDate || rt.date;
+    if (when === rt.date) return;       // handed back the same day: already shown on the return line
+    if (!bill || !(amt > 0) || !within(when)) return;
+    rows.push({
+      id: `ref-${rt.id}`, date: when, type: 'refund', billId: rt.billId, ref: bill.billNo,
+      title: `Refund paid — ${rt.refundMethod || 'Cash'}`,
+      detail: `Money handed back for Bill ${bill.billNo}`,
+      method: rt.refundMethod || 'Cash', debit: amt, credit: 0,
     });
   });
 
@@ -1521,7 +1568,7 @@ export function partyStatement(partyId, data = {}, from = null, to = null) {
   /* ---- Order by date, then by a sensible within-day sequence ---- */
   const typeOrder = {
     bill: 0, payment: 1, advance: 1, 'cheque-pending': 1,
-    return: 2, reversal: 3, bounced: 3, void: 4, info: 5,
+    return: 2, refund: 2.5, reversal: 3, bounced: 3, void: 4, info: 5,
   };
   rows.length = 0;
   rows.push(...merged);
@@ -1919,7 +1966,7 @@ export function ledgerTabOf(row, { supplierView = false } = {}) {
     return 'other';
   }
   if (base === 'bill' || base === 'void') return 'sales';
-  if (base === 'return') return 'returns';
+  if (base === 'return' || base === 'refund') return 'returns';
   // Payments, advances, cheques waiting or bounced, reversals, and the info
   // lines that explain them are all money coming in.
   return 'received';

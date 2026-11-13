@@ -13,12 +13,15 @@ import { money, todayISO, r2 } from '../../lib/format';
 import { billState } from '../../lib/calc';
 
 export default function ReturnModal({ open, onClose, bill, party }) {
-  const { data, mutate } = useApp();
+  const { data, mutate, methods } = useApp();
   const [itemId, setItemId] = useState('');
   const [qty, setQty] = useState('');
   const [restock, setRestock] = useState(true);
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
+  // Hand the money back with the return (only when the customer had paid for these goods).
+  const [refundOn, setRefundOn] = useState(true);
+  const [refundMethod, setRefundMethod] = useState('Cash');
   const [busy, setBusy] = useState(false);
 
   const lines = useMemo(
@@ -46,10 +49,12 @@ export default function ReturnModal({ open, onClose, bill, party }) {
   const value = line ? r2((Number(qty) || 0) * Number(line.price)) : 0;
   const overMax = Number(qty) > maxQty;
 
-  // A return on a fully paid bill creates a refund owed to the party
-  const createsRefund = state && state.due <= 0 && value > 0;
+  // What the customer has paid beyond what the bill is worth once these goods come off it:
+  // this is the money that has to go back to them (otherwise it sits on their ledger as a minus).
+  const owedBack = state ? r2(Math.max(0, Math.min(value, state.paid - r2(state.net - value)))) : 0;
+  const createsRefund = owedBack > 0;
 
-  const reset = () => { setItemId(''); setQty(''); setNote(''); setRestock(true); setDate(todayISO()); };
+  const reset = () => { setItemId(''); setQty(''); setNote(''); setRestock(true); setDate(todayISO()); setRefundOn(true); };
 
   const submit = async () => {
     if (busy) return; // guard: a second click must not record the return twice
@@ -59,6 +64,7 @@ export default function ReturnModal({ open, onClose, bill, party }) {
       await mutate(() => api.addReturn({
         billId: bill.id, itemId, qty: Number(qty),
         valueAdjusted: value, restock, date, note,
+        refundAmount: refundOn && owedBack > 0 ? owedBack : 0, refundMethod, refundDate: date,
       }), 'Return recorded');
       reset();
       onClose?.();
@@ -160,11 +166,44 @@ export default function ReturnModal({ open, onClose, bill, party }) {
             {createsRefund && value > 0 && (
               <div className="small" style={{ marginTop: 6, display: 'flex', gap: 6 }}>
                 <Info size={13} style={{ flex: 'none', marginTop: 1 }} />
-                This bill is already paid, so the return creates a {money(value)} refund owed
-                to {party?.name}, visible on their ledger.
+                {party?.name} has already paid {money(owedBack)} of this, so that money has to go back to them.
               </div>
             )}
           </div>
+
+          {!createsRefund && state && value > 0 && (
+            <div className="small muted" style={{ marginTop: 12, display: 'flex', gap: 6 }}>
+              <Info size={13} style={{ flex: 'none', marginTop: 1 }} />
+              {state.paid > 0.004
+                ? `No refund needed: ${party?.name || 'the customer'} still owes money on this bill, so the return just reduces what they owe.`
+                : 'This bill is unpaid, so there is no money to hand back — the return just reduces what they owe.'}
+            </div>
+          )}
+
+          {createsRefund && (
+            <div style={{ marginTop: 12, padding: '11px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer' }}>
+                <input type="checkbox" checked={refundOn} onChange={(e) => setRefundOn(e.target.checked)}
+                       style={{ width: 17, height: 17, accentColor: 'var(--accent)' }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>Refund {money(owedBack)} to {party?.name} now</div>
+                  <div className="small muted">
+                    {refundOn
+                      ? 'The money goes out of your till and their ledger stays at 0.'
+                      : 'Not handed back yet: their ledger will show a minus (you owe them). Refund it later from the bill.'}
+                  </div>
+                </div>
+              </label>
+              {refundOn && (
+                <div style={{ marginTop: 10, maxWidth: 260 }}>
+                  <label className="small muted" style={{ display: 'block', marginBottom: 3 }}>
+                    Payment method — paid back by
+                  </label>
+                  <Select value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)} options={methods} />
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
     </Modal>

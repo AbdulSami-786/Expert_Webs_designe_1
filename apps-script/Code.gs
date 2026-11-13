@@ -47,7 +47,9 @@ var SCHEMA = {
   // bills share it, so the ledger can show them as one entry.
   Payments: ['id', 'billId', 'partyId', 'method', 'amount', 'date', 'note', 'reversed',
              'reversedAt', 'reverseReason', 'isAdvance', 'groupId'],
-  Returns: ['id', 'billId', 'itemId', 'qty', 'valueAdjusted', 'restock', 'date', 'note'],
+  // refundAmount/refundMethod/refundDate appended: money handed back to the party for these goods.
+  Returns: ['id', 'billId', 'itemId', 'qty', 'valueAdjusted', 'restock', 'date', 'note',
+            'refundAmount', 'refundMethod', 'refundDate'],
   // accountHolder appended: the name printed on the cheque, which is often not
   // the party's own (a relative, a firm, a customer of theirs).
   Cheques: ['id', 'billId', 'partyId', 'paymentId', 'chequeNo', 'bankName', 'dateIssued',
@@ -118,7 +120,7 @@ var NUMERIC = {
   creditLimit: 1, defaultDueDays: 1, conversionRate: 1, costPrice: 1, openingStock: 1,
   lowStockAlert: 1, price: 1, subtotal: 1, roundOff: 1, totalAmount: 1, qty: 1,
   costPriceAtSale: 1, lineTotal: 1, amount: 1, valueAdjusted: 1, applied: 1,
-  monthlySalary: 1, estimatedValue: 1, value: 1, openingBalance: 1
+  monthlySalary: 1, estimatedValue: 1, value: 1, openingBalance: 1, refundAmount: 1
 };
 
 /**
@@ -167,7 +169,7 @@ var ACTING_USER = 'system';
  * lands a second identical POST, and without a guard it writes a second bill.
  */
 var REPLAY_GUARDED = {
-  saveBill: 1, addPayment: 1, addReturn: 1, addAdvance: 1, savePurchase: 1,
+  saveBill: 1, addPayment: 1, addReturn: 1, addRefund: 1, addAdvance: 1, savePurchase: 1,
   addEmployeeTx: 1, saveExpense: 1, saveStockLoss: 1, saveAsset: 1,
   saveCheque: 1, settleParty: 1,
   savePurchaseBill: 1, adoptPurchases: 1, addSupplierPayment: 1, addSupplierReturn: 1, saveSupplier: 1,
@@ -311,6 +313,7 @@ function route(action, p, token) {
     case 'settleParty':      return settleParty(p);
 
     case 'addReturn':        return addReturn(p);
+    case 'addRefund':        return addRefund(p);
 
     case 'saveCheque':       return saveCheque(p);
     case 'setChequeStatus':  return setChequeStatus(p);
@@ -1887,7 +1890,7 @@ function saveBill(p) {
         partyId: bill.partyId,
         method: pay.method,
         amount: r2(pay.amount),
-        date: bill.date,
+        date: pay.date || bill.date,
         note: pay.note || '',
         reversed: false,
         reversedAt: '',
@@ -2590,6 +2593,19 @@ function addReturn(p) {
            valueLeft.toFixed(2) + ').');
     }
 
+    // Money handed back with the return (optional): at most what the customer has paid
+    // beyond what the bill is worth once these goods are taken off it.
+    var refund = r2(p.refundAmount);
+    if (refund < 0) fail('Refund cannot be negative');
+    if (refund > 0) {
+      var allowed = billOverpaid(p.billId, value);
+      if (refund > allowed + 0.004) {
+        fail('Refund cannot be more than ' + allowed.toFixed(2) + ' - that is all the customer has ' +
+             'paid beyond what the bill is worth after this return.');
+      }
+    }
+
+    var when = p.date || todayISO();
     var rec = {
       id: uid('ret'),
       billId: p.billId,
@@ -2597,13 +2613,84 @@ function addReturn(p) {
       qty: Number(p.qty) || 0,
       valueAdjusted: r2(p.valueAdjusted),
       restock: Boolean(p.restock),
-      date: p.date || todayISO(),
-      note: p.note || ''
+      date: when,
+      note: p.note || '',
+      refundAmount: refund,
+      refundMethod: refund > 0 ? (p.refundMethod || 'Cash') : '',
+      refundDate: refund > 0 ? (p.refundDate || when) : ''
     };
     appendRow('Returns', rec);
     logActivity('return', rec.id, 'create',
-      'Return against Bill ' + bill.billNo + ' — value ' + rec.valueAdjusted);
+      'Return against Bill ' + bill.billNo + ' — value ' + rec.valueAdjusted +
+      (refund > 0 ? ', refunded ' + refund + ' (' + rec.refundMethod + ')' : ''));
     return rec;
+  });
+}
+
+/**
+ * What the party has paid beyond what a bill is worth: cleared payments, less money already handed
+ * back, less the bill's total after returns (and `extraReturn`, a return about to be recorded).
+ * Mirrors billState().overpaid in src/lib/calc.js. An uncleared cheque is not money yet.
+ */
+function billOverpaid(billId, extraReturn) {
+  var bill = getById('Bills', billId);
+  if (!bill) return 0;
+  var returned = 0;
+  var refunded = 0;
+  readAll('Returns').forEach(function (r) {
+    if (r.billId !== billId) return;
+    returned += Number(r.valueAdjusted) || 0;
+    refunded += Number(r.refundAmount) || 0;
+  });
+  var uncleared = {};
+  readAll('Cheques').forEach(function (c) { if (c.status !== 'cleared' && c.paymentId) uncleared[c.paymentId] = 1; });
+  var paid = 0;
+  readAll('Payments').forEach(function (x) {
+    if (x.billId === billId && !x.reversed && !uncleared[x.id]) paid += Number(x.amount) || 0;
+  });
+  var net = r2(bill.totalAmount) - r2(returned) - r2(extraReturn || 0);
+  return r2(Math.max(0, r2(paid) - r2(refunded) - net));
+}
+
+/**
+ * Hand money back to a party for goods they returned from a bill they had paid. Mirrors the
+ * 'addRefund' case in src/lib/localAdapter.js: it is kept on the bill's return record.
+ */
+function addRefund(p) {
+  return withLock(function () {
+    var bill = getById('Bills', p.billId);
+    if (!bill) fail('Bill not found');
+    var amount = r2(p.amount);
+    if (!(amount > 0)) fail('Enter a refund amount');
+
+    var rets = readAll('Returns')
+      .filter(function (r) { return r.billId === p.billId; })
+      .sort(function (a, b) {
+        return String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id));
+      });
+    if (!rets.length) fail('Only a bill that has a return can be refunded.');
+
+    var can = billOverpaid(p.billId, 0);
+    if (amount > can + 0.004) {
+      fail('Refund cannot be more than ' + can.toFixed(2) + ' - that is all this bill was overpaid by.');
+    }
+
+    // The latest return that has not been refunded yet; else add to the latest one.
+    var target = rets[0];
+    for (var i = 0; i < rets.length; i++) {
+      if (!(Number(rets[i].refundAmount) > 0)) { target = rets[i]; break; }
+    }
+    var rec = getById('Returns', target.id);
+    var patch = {
+      refundAmount: r2((Number(rec.refundAmount) || 0) + amount),
+      refundMethod: p.method || 'Cash',
+      refundDate: p.date || todayISO()
+    };
+    updateRow('Returns', rec._row, patch);
+    logActivity('return', rec.id, 'edit',
+      'Refunded ' + amount + ' (' + patch.refundMethod + ') for Bill ' + bill.billNo +
+      (p.note ? ' — ' + p.note : ''));
+    return getById('Returns', rec.id);
   });
 }
 
