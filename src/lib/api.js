@@ -92,6 +92,16 @@ async function callSheets(action, payload = {}, attempt = 0, requestId = null) {
     if (action !== 'login' && /session has expired|sign in again/i.test(json.error || '')) {
       window.dispatchEvent(new CustomEvent('ewd:session-expired'));
     }
+    // The Sheet's script is older than this app and has never heard of the action. Saying so
+    // (and how to fix it) beats a bare "Unknown action: addRefund".
+    if (/^Unknown action:/i.test(json.error || '')) {
+      const err = new Error(
+        `Your Google Sheet script is out of date and does not know "${action}" yet. `
+        + 'Open the Sheet > Extensions > Apps Script, paste the latest Code.gs, then '
+        + 'Deploy > Manage deployments > pencil > Version: New version > Deploy.');
+      err.outdatedBackend = true;
+      throw err;
+    }
     throw new Error(json.error || 'Request failed');
   }
   return json.data;

@@ -34,7 +34,7 @@ export default function OldDataImport() {
       setBackend({ state: 'ok', msg: '' });
     } catch (err) {
       const msg = String(err?.message || err);
-      if (/unknown action/i.test(msg)) setBackend({ state: 'old', msg });
+      if (err?.outdatedBackend || /unknown action/i.test(msg)) setBackend({ state: 'old', msg });
       else if (err?.isNetworkError) setBackend({ state: 'offline', msg });
       else setBackend({ state: 'ok', msg });        // any other refusal means the action exists
     }

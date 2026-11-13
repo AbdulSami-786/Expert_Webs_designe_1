@@ -151,8 +151,24 @@ var BOOLEAN = { reversed: 1, restock: 1, active: 1, isAdvance: 1 };
    Web app entry points
    ========================================================================== */
 
+/**
+ * Which build of this file is actually DEPLOYED. Opening the web-app link in a browser shows it,
+ * so "did my update go live?" has a one-second answer: if `version` or a feature below is
+ * missing, the link is still serving an old deployment (saving Code.gs is not enough: it needs
+ * Deploy > Manage deployments > pencil > Version: New version > Deploy).
+ */
+var BACKEND_VERSION = '1.4.0';
+var BACKEND_FEATURES = ['adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan'];
+
 function doGet(e) {
-  return json({ ok: true, data: { status: 'Expert Webs Designs backend is running' } });
+  return json({
+    ok: true,
+    data: {
+      status: 'Expert Webs Designs backend is running',
+      version: BACKEND_VERSION,
+      features: BACKEND_FEATURES
+    }
+  });
 }
 
 // Who the current request is acting as, for the activity log. Set per request

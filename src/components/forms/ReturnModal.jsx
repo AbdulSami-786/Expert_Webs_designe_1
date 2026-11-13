@@ -11,6 +11,8 @@ import api from '../../lib/api';
 import { Modal, Button, Field, Input, Select, Money } from '../ui';
 import { money, todayISO, r2 } from '../../lib/format';
 import { billState } from '../../lib/calc';
+import { useBackendFeature } from '../../lib/useBackendFeature';
+import OutdatedBackend from '../OutdatedBackend';
 
 export default function ReturnModal({ open, onClose, bill, party }) {
   const { data, mutate, methods } = useApp();
@@ -54,11 +56,17 @@ export default function ReturnModal({ open, onClose, bill, party }) {
   const owedBack = state ? r2(Math.max(0, Math.min(value, state.paid - r2(state.net - value)))) : 0;
   const createsRefund = owedBack > 0;
 
+  // An out-of-date script silently ignores a refund on a return, so it is checked first and the
+  // return is not recorded as if it had been refunded.
+  const refundSupport = useBackendFeature('addRefund', open && createsRefund);
+  const needsRefund = createsRefund && refundOn;
+  const refundBlocked = needsRefund && (refundSupport.state === 'old' || refundSupport.state === 'checking');
+
   const reset = () => { setItemId(''); setQty(''); setNote(''); setRestock(true); setDate(todayISO()); setRefundOn(true); };
 
   const submit = async () => {
     if (busy) return; // guard: a second click must not record the return twice
-    if (!itemId || !(Number(qty) > 0) || overMax) return;
+    if (!itemId || !(Number(qty) > 0) || overMax || refundBlocked) return;
     setBusy(true);
     try {
       await mutate(() => api.addReturn({
@@ -82,7 +90,7 @@ export default function ReturnModal({ open, onClose, bill, party }) {
         <>
           <Button onClick={() => { reset(); onClose?.(); }}>Cancel</Button>
           <Button variant="primary" icon={RotateCcw} onClick={submit} loading={busy}
-                  disabled={!itemId || !(Number(qty) > 0) || overMax}>
+                  disabled={!itemId || !(Number(qty) > 0) || overMax || refundBlocked}>
             Record Return
           </Button>
         </>
@@ -194,6 +202,15 @@ export default function ReturnModal({ open, onClose, bill, party }) {
                   </div>
                 </div>
               </label>
+              {needsRefund && refundSupport.state === 'old' && (
+                <>
+                  <OutdatedBackend what="refunds" onRecheck={refundSupport.recheck} />
+                  <div className="small muted">
+                    Or untick the refund box above to record the return now without refunding
+                    (the customer's ledger will show a minus until you refund it later).
+                  </div>
+                </>
+              )}
               {refundOn && (
                 <div style={{ marginTop: 10, maxWidth: 260 }}>
                   <label className="small muted" style={{ display: 'block', marginBottom: 3 }}>

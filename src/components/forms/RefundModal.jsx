@@ -7,6 +7,8 @@ import { useApp } from '../../context/AppContext';
 import api from '../../lib/api';
 import { Modal, Button, Field, Input, Select } from '../ui';
 import { money, todayISO, r2 } from '../../lib/format';
+import { useBackendFeature } from '../../lib/useBackendFeature';
+import OutdatedBackend from '../OutdatedBackend';
 
 export default function RefundModal({ open, onClose, bill, party, max = 0 }) {
   const { methods, mutate } = useApp();
@@ -14,6 +16,7 @@ export default function RefundModal({ open, onClose, bill, party, max = 0 }) {
   const [method, setMethod] = useState('Cash');
   const [date, setDate] = useState(todayISO());
   const [busy, setBusy] = useState(false);
+  const support = useBackendFeature('addRefund', open);
 
   // Start on the full amount owed back, every time it opens.
   useEffect(() => {
@@ -22,7 +25,7 @@ export default function RefundModal({ open, onClose, bill, party, max = 0 }) {
 
   if (!bill) return null;
   const n = Number(amount);
-  const bad = !(n > 0) || n > max + 0.004;
+  const bad = !(n > 0) || n > max + 0.004 || support.state === 'old';
 
   const submit = async () => {
     if (busy || bad) return;
@@ -47,6 +50,7 @@ export default function RefundModal({ open, onClose, bill, party, max = 0 }) {
         {party?.name || 'The customer'} paid <strong>{money(max)}</strong> more than this bill is worth after the
         return. Handing it back clears the minus on their ledger and takes it out of your till.
       </p>
+      {support.state === 'old' && <OutdatedBackend what="refunds" onRecheck={support.recheck} />}
       <div className="form-grid">
         <Field label="Amount handed back"
                error={n > max + 0.004 ? `Cannot be more than ${money(max)}` : ''}>
