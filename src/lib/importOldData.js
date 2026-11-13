@@ -16,6 +16,11 @@
 //     supplier it came out of, so Sold / Available are right per supplier.
 //   * An existing item is reused by name; a missing one is created.
 //
+// The same file also carries the shop's other records, imported when ticked: shop expenses,
+// salaries paid and assets (renovation, bike). Installment customers are only CHECKED, not
+// imported: their phones were already counted as sold above, and importing them as bills
+// would sell the same phone twice.
+//
 // Money is recorded under the method "Old Data" — not Cash or Bank — so the
 // Accounts screen (cash and bank balances) is not changed by history.
 //
@@ -23,7 +28,7 @@
 // customer are reused by name, the purchase bill carries IMPORT_TAG and the sales
 // bill its own note, and each is created only if it is not there yet.
 
-import { billTotals } from './calc';
+import { billTotals, supplierStockRows, deriveBills, partyDue } from './calc';
 import { r2 } from './format';
 
 export const IMPORT_TAG = 'Imported from old Excel (8 NOV)';
@@ -150,7 +155,8 @@ export function planOldData({ data, oldData }) {
 
   // A group that moves existing rows in is already "paid" through them; one
   // starting from nothing keeps the payments the Excel lists.
-  const list = [...groups.values()].filter((g) => g.adopt.length || g.newLines.length || g.sales.length);
+  const allGroups = [...groups.values()];
+  const list = allGroups.filter((g) => g.adopt.length || g.newLines.length || g.sales.length);
   list.forEach((g) => { if (g.adopt.length) g.payments = []; });
 
   const sum = (f) => r2(list.reduce((s, g) => s + f(g), 0));
@@ -176,7 +182,115 @@ export function planOldData({ data, oldData }) {
   if (noSupplier) {
     warnings.push(`${noSupplier} purchase row${noSupplier === 1 ? ' has' : 's have'} no supplier name and stay${noSupplier === 1 ? 's' : ''} on the Purchases page.`);
   }
-  return { groups: list, summary, warnings };
+  const extras = planExtras({ data, oldData });
+  Object.assign(summary, {
+    assets: extras.assets.length, expenses: extras.expenses.length, salaries: extras.salaries.length,
+    newEmployees: extras.newEmployees.length,
+    expenseTotal: r2(extras.expenses.reduce((t, x) => t + x.amount, 0)),
+    salaryTotal: r2(extras.salaries.reduce((t, x) => t + x.amount, 0)),
+    assetTotal: r2(extras.assets.reduce((t, x) => t + x.value, 0)),
+  });
+  return { groups: list, allGroups, summary, warnings, extras };
+}
+
+/** The sheet's own day, whatever shape the app stored the date in. */
+const day = (v) => String(v || '').slice(0, 10);
+
+/**
+ * Shop expenses, salaries and assets from the sheet that the app does not have yet. An expense is
+ * "already there" when the app has one on the same day for the same amount; a salary when that
+ * employee already has one that day for that amount; an asset when one has the same name and value.
+ */
+export function planExtras({ data, oldData }) {
+  const ex = oldData.extras || {};
+  const haveExp = new Set((data.expenses || []).map((e) => `${day(e.date)}|${r2(e.amount)}`));
+  const haveAsset = new Set((data.assets || []).map((a) => `${key(a.name)}|${r2(a.value)}`));
+
+  // An employee matches on the same name, or one name inside the other ("Faizan" / "Faizan Ali").
+  const emps = data.employees || [];
+  const empFor = (name) => emps.find((e) => key(e.name) === key(name))
+    || emps.find((e) => key(e.name).includes(key(name)) || key(name).includes(key(e.name)));
+  const haveTx = new Set((data.employeeTx || []).map((t) => `${t.employeeId}|${day(t.date)}|${r2(t.amount)}`));
+
+  const newEmployees = [];
+  const salaries = [];
+  (ex.salaries || []).forEach((t) => {
+    const e = empFor(t.employee);
+    if (!e && !newEmployees.includes(t.employee)) newEmployees.push(t.employee);
+    if (e && haveTx.has(`${e.id}|${day(t.date)}|${r2(t.amount)}`)) return;
+    salaries.push({ ...t, employeeId: e?.id || '' });
+  });
+  return {
+    assets: (ex.assets || []).filter((a) => !haveAsset.has(`${key(a.name)}|${r2(a.value)}`)),
+    expenses: (ex.expenses || []).filter((x) => !haveExp.has(`${day(x.date)}|${r2(x.amount)}`)),
+    salaries, newEmployees,
+  };
+}
+
+/**
+ * Read-only comparison of the sheet with what the app holds right now, so nothing is left
+ * missing: per supplier (bought / sold / available), items, shop records, and the installment
+ * customers (who owes what).
+ */
+export function checkOldData({ data, oldData }) {
+  const { allGroups, extras } = planOldData({ data, oldData });
+  const supByName = new Map((data.suppliers || []).map((s) => [key(s.name), s]));
+  const itemNames = new Set((data.items || []).map((i) => key(i.name)));
+  const ex = oldData.extras || {};
+
+  const suppliers = allGroups.filter((g) => g.rows.length).map((g) => {
+    const bought = r2(g.rows.reduce((t, r) => t + r.qty, 0));
+    const sold = r2(g.rows.reduce((t, r) => t + r.sold, 0));
+    const sheet = { bought, sold, available: r2(bought - sold) };
+    const sup = supByName.get(key(g.name));
+    let app = null;
+    if (sup) {
+      const rows = supplierStockRows(sup.id, data);
+      const sum = (f) => r2(rows.reduce((t, r) => t + r[f], 0));
+      app = { bought: sum('purchased'), sold: sum('sold'), available: sum('available') };
+    }
+    const ok = Boolean(app) && ['bought', 'sold', 'available'].every((f) => Math.abs(app[f] - sheet[f]) < 0.01);
+    return { name: g.name, sheet, app, ok };
+  });
+
+  const sheetItems = new Set();
+  oldData.suppliers.forEach((s) => s.rows.forEach((r) => sheetItems.add(key(r.item))));
+  const missingItems = [...sheetItems].filter((k) => !itemNames.has(k));
+
+  // Installment customers: found as a party, and does the app agree on what they still owe?
+  const derived = deriveBills(data.bills || [], data);
+  const parties = data.parties || [];
+  const customers = (ex.installments || []).map((c) => {
+    const num = c.qists.filter((q) => typeof q.amount === 'number').reduce((t, q) => t + q.amount, 0);
+    const cleared = c.qists.some((q) => q.amount === 'clear');
+    const left = cleared ? 0 : r2(Math.max(0, c.total - c.advance - num));
+    const party = parties.find((p) => key(p.name) === key(c.name))
+      || parties.find((p) => key(p.name).includes(key(c.name)) || key(c.name).includes(key(p.name)));
+    const appLeft = party ? r2(partyDue(party.id, derived)) : null;
+    return {
+      name: c.name, item: c.item, total: c.total, left, appLeft, found: Boolean(party),
+      ok: Boolean(party) && Math.abs(appLeft - left) < 1,
+    };
+  });
+
+  const exp = oldData.extras?.expenses || [];
+  const sal = oldData.extras?.salaries || [];
+  const ast = oldData.extras?.assets || [];
+  return {
+    suppliers,
+    items: { sheet: sheetItems.size, missing: missingItems },
+    records: {
+      expenses: { sheet: exp.length, missing: extras.expenses.length },
+      salaries: { sheet: sal.length, missing: extras.salaries.length },
+      assets: { sheet: ast.length, missing: extras.assets.length },
+    },
+    customers,
+    salesCross: {
+      dailySheet: r2(ex.dailySalesTotal || 0),
+      itemSold: r2(oldData.suppliers.reduce((t, s) => t + s.rows.reduce((u, r) => u + r.revenue, 0), 0)),
+    },
+    notes: ex.notes || [],
+  };
 }
 
 /**
@@ -187,8 +301,8 @@ export function planOldData({ data, oldData }) {
  * @param oldData   the parsed oldData.json (see parseOldData)
  * @param onStep    (text) => void, for progress
  */
-export async function importOldData({ api, data, settings, oldData, onStep = () => {} }) {
-  const { groups } = planOldData({ data, oldData });
+export async function importOldData({ api, data, settings, oldData, onStep = () => {}, extras: withExtras = true }) {
+  const { groups, extras } = planOldData({ data, oldData });
   const supByName = new Map((data.suppliers || []).map((s) => [key(s.name), s]));
   const itemByName = new Map((data.items || []).map((i) => [key(i.name), i]));
   const billDone = new Set((data.purchaseBills || [])
@@ -200,6 +314,7 @@ export async function importOldData({ api, data, settings, oldData, onStep = () 
 
   const result = {
     suppliers: 0, moved: 0, items: 0, purchases: 0, payments: 0, sales: 0, skipped: [],
+    expenses: 0, salaries: 0, assets: 0, employees: 0,
   };
   let party = (data.parties || []).find((p) => key(p.name) === key(OLD_SALES_PARTY));
   let n = 0;
@@ -301,6 +416,46 @@ export async function importOldData({ api, data, settings, oldData, onStep = () 
         payments: total > 0 ? [{ method: IMPORT_METHOD, amount: total }] : [],
       });
       result.sales += 1;
+    }
+  }
+
+  /* ---- Shop records, when ticked: each created only if the app does not already have it. ---- */
+  if (withExtras) {
+    let i = 0;
+    for (const a of extras.assets) {
+      i += 1;
+      onStep(`Assets ${i}/${extras.assets.length}`);
+      await api.saveAsset({ name: a.name, value: a.value, date: a.date, note: a.note });
+      result.assets += 1;
+    }
+
+    const empId = new Map();
+    for (const name of extras.newEmployees) {
+      onStep(`Employee: ${name}`);
+      const sal = extras.salaries.filter((t) => t.employee === name);
+      const rec = await api.saveEmployee({
+        name, role: 'Staff', phone: '', monthlySalary: sal[sal.length - 1]?.amount || 0,
+        joinDate: sal[0]?.date,
+      });
+      empId.set(name, rec.id);
+      result.employees += 1;
+    }
+    i = 0;
+    for (const t of extras.salaries) {
+      i += 1;
+      onStep(`Salaries ${i}/${extras.salaries.length}`);
+      await api.addEmployeeTx({
+        employeeId: t.employeeId || empId.get(t.employee), type: 'salary', amount: t.amount,
+        date: t.date, method: IMPORT_METHOD, note: t.note,
+      });
+      result.salaries += 1;
+    }
+    i = 0;
+    for (const x of extras.expenses) {
+      i += 1;
+      onStep(`Expenses ${i}/${extras.expenses.length}`);
+      await api.saveExpense({ category: x.category, amount: x.amount, date: x.date, method: IMPORT_METHOD, note: x.note });
+      result.expenses += 1;
     }
   }
   return result;

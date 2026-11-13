@@ -22,8 +22,11 @@ export const IS_DESKTOP =
   typeof navigator !== 'undefined' && /\bElectron\//.test(navigator.userAgent || '');
 
 // Your deployed Apps Script Web App URL (the Google Sheet backend).
+// Deployment made after the Code.gs update (the one that knows adoptPurchases, supplierId, installPlan).
+// Previous deployment, kept for rolling back:
+//   https://script.google.com/macros/s/AKfycbyPkrSO3jOpm8gxqGEI9-IHsdvkJDktnQGnsnPBM1EyDmdzsy7nrTLV1krhyeoBG1Ua/exec
 const SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbyPkrSO3jOpm8gxqGEI9-IHsdvkJDktnQGnsnPBM1EyDmdzsy7nrTLV1krhyeoBG1Ua/exec';
+  'https://script.google.com/macros/s/AKfycbxjiF2Cbu3XRXkWHG6ZJDcdDZ1KkrOF-vuf0R7mR8vF1Y1C9SWTGzGw7gce4aYTKVYrEA/exec';
 
 // Google Sheets sync login. Leave both empty to keep offline-first sync off.
 // Anything written here is compiled into the program, so anyone who has the

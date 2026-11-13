@@ -655,6 +655,47 @@ export function supplierStockRows(supplierId, {
 }
 
 /**
+ * The sales behind a supplier's "Sold" figures, item by item: every live sale line that
+ * was taken from this supplier's stock. A line left on "any supplier" is counted here only
+ * when this supplier is the item's one and only source, so it can be attributed for sure.
+ * Returns Map itemId -> [{ id, billId, billNo, date, party, qty, unit, price, amount }], newest first.
+ */
+export function supplierItemSales(supplierId, {
+  billItems = [], bills = [], parties = [], purchases = [], purchaseBills = [],
+} = {}) {
+  const voided = new Set(bills.filter((b) => b.status === 'voided').map((b) => b.id));
+  const voidedP = new Set(purchaseBills.filter((b) => b.status === 'voided').map((b) => b.id));
+  const billById = new Map(bills.map((b) => [b.id, b]));
+  const partyName = new Map(parties.map((p) => [p.id, p.name]));
+
+  const sources = new Map();           // itemId -> suppliers it was bought from
+  purchases.forEach((p) => {
+    if (!p.supplierId || voidedP.has(p.purchaseBillId)) return;
+    if (!sources.has(p.itemId)) sources.set(p.itemId, new Set());
+    sources.get(p.itemId).add(p.supplierId);
+  });
+
+  const out = new Map();
+  billItems.forEach((bi) => {
+    if (voided.has(bi.billId)) return;
+    const named = bi.supplierId === supplierId;
+    const src = sources.get(bi.itemId);
+    const sole = !bi.supplierId && src && src.size === 1 && src.has(supplierId);
+    if (!named && !sole) return;
+    const b = billById.get(bi.billId);
+    const qty = Number(bi.qty) || 0;
+    if (!out.has(bi.itemId)) out.set(bi.itemId, []);
+    out.get(bi.itemId).push({
+      id: bi.id, billId: bi.billId, billNo: b?.billNo || '', date: b?.date || '',
+      party: partyName.get(b?.partyId) || '', qty, unit: bi.unit || '',
+      price: Number(bi.price) || 0, amount: r2(qty * (Number(bi.price) || 0)),
+    });
+  });
+  out.forEach((list) => list.sort((a, b) => String(b.date).localeCompare(String(a.date))));
+  return out;
+}
+
+/**
  * Stock on hand by supplier for every item, for picking where to sell from.
  * Map of itemId -> [{ supplierId, name, available, cost }] (only suppliers that
  * still hold some), largest holding first.

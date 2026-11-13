@@ -1,11 +1,11 @@
 // One supplier's khata: what the shop owes them, every purchase bill, every
 // payment and every return, with a running balance.
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, ShoppingCart, Wallet, Undo2, Pencil, Download, Printer, Trash2, Ban, Truck, Phone,
-  HandCoins, ListChecks, Receipt, Link2, Package,
+  HandCoins, ListChecks, Receipt, Link2, Package, ChevronRight, ChevronDown,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
@@ -23,7 +23,7 @@ import LineDeliveryModal, { DeliveredCount } from '../components/forms/LineDeliv
 import {
   supplierBalance, derivePurchaseBills, supplierCombinedStatement, purchaseBillLines, rangeFor,
   purchaseReceipt, lineReceivedQty, LEDGER_TABS, inLedgerTab, supplierNetBalance, deriveBills,
-  supplierStockRows,
+  supplierStockRows, supplierItemSales,
 } from '../lib/calc';
 import { money, fmtDate, r2, norm } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
@@ -104,13 +104,24 @@ export default function SupplierLedger() {
   ].filter(Boolean).join(' ')).includes(term))), [tabRows, term]);
 
   // Per item bought from this supplier: how much came, how much sold, how much is left.
+  const salesByItem = useMemo(() => supplierItemSales(id, data), [id, data]);
+  const [openItems, setOpenItems] = useState(() => new Set());   // items whose sales are shown
+  const toggleItem = (itemId) => setOpenItems((s) => {
+    const n = new Set(s);
+    if (n.has(itemId)) n.delete(itemId); else n.add(itemId);
+    return n;
+  });
   const stockRows = useMemo(() => supplierStockRows(id, data)
     .map((r) => {
       const it = data.items.find((i) => i.id === r.itemId);
-      return { ...r, name: it?.name || 'Item', unit: it?.baseUnit || '' };
+      const sales = salesByItem.get(r.itemId) || [];
+      return {
+        ...r, name: it?.name || 'Item', unit: it?.baseUnit || '',
+        sales, saleAmount: r2(sales.reduce((s, x) => s + x.amount, 0)),
+      };
     })
     .filter((r) => !term || norm(r.name).includes(term))
-    .sort((a, b) => a.name.localeCompare(b.name)), [id, data, term]);
+    .sort((a, b) => a.name.localeCompare(b.name)), [id, data, term, salesByItem]);
   const inStockRows = stockRows.filter((r) => r.available > 0);
   const noStockRows = stockRows.filter((r) => !(r.available > 0));
   const stockTotals = useMemo(() => ({
@@ -118,6 +129,7 @@ export default function SupplierLedger() {
     sold: r2(stockRows.reduce((s, r) => s + r.sold, 0)),
     available: r2(stockRows.reduce((s, r) => s + r.available, 0)),
     value: r2(stockRows.reduce((s, r) => s + r.value, 0)),
+    saleAmount: r2(stockRows.reduce((s, r) => s + r.saleAmount, 0)),
   }), [stockRows]);
 
   const totals = useMemo(() => ({
@@ -332,7 +344,7 @@ export default function SupplierLedger() {
       </div>
 
       <Card title="Stock from this supplier"
-            subtitle={`${inStockRows.length} items available · ${noStockRows.length} out of stock · ${money(stockTotals.value)} stock left at cost`}
+            subtitle={`${inStockRows.length} items available · ${noStockRows.length} out of stock · ${money(stockTotals.value)} stock left at cost · ${money(stockTotals.saleAmount)} sold so far — tap an item to see its sales`}
             tight>
         {!stockRows.length ? (
           <Empty icon={Package} title={term ? 'No matching items' : 'No stock bought yet'}
@@ -343,6 +355,7 @@ export default function SupplierLedger() {
               <thead>
                 <tr>
                   <th>Item</th><th className="r">Bought</th><th className="r">Sold</th>
+                  <th className="r">Sale amount</th>
                   <th className="r">Available</th><th className="r">Cost</th><th className="r">Stock value</th>
                 </tr>
               </thead>
@@ -351,25 +364,69 @@ export default function SupplierLedger() {
                 .map(([label, list, out]) => (
                   <tbody key={label}>
                     <tr>
-                      <td colSpan={6} style={{ fontWeight: 700, background: 'var(--bg-subtle, rgba(0,0,0,0.03))',
+                      <td colSpan={7} style={{ fontWeight: 700, background: 'var(--bg-subtle, rgba(0,0,0,0.03))',
                                                color: out ? 'var(--danger)' : undefined }}>
                         {label} <span className="muted small" style={{ fontWeight: 500 }}>({list.length})</span>
                       </td>
                     </tr>
-                    {list.map((r) => (
-                      <tr key={r.itemId}>
-                        <td style={{ fontWeight: 600 }}>{r.name}</td>
-                        <td className="r num">{r.purchased} {r.unit}</td>
-                        <td className="r num">{r.sold} {r.unit}</td>
-                        <td className="r strong">
-                          <span className="num" style={{ color: out ? 'var(--danger)' : undefined }}>
-                            {r.available} {r.unit}
-                          </span>
-                        </td>
-                        <td className="r"><Money value={r.cost} /></td>
-                        <td className="r strong"><Money value={r.value} /></td>
-                      </tr>
-                    ))}
+                    {list.map((r) => {
+                      const open = openItems.has(r.itemId);
+                      return (
+                        <Fragment key={r.itemId}>
+                          <tr className="clickable" onClick={() => toggleItem(r.itemId)}
+                              title="Show this item's previous sales">
+                            <td style={{ fontWeight: 600 }}>
+                              {open ? <ChevronDown size={14} style={{ verticalAlign: -2, marginRight: 4 }} />
+                                    : <ChevronRight size={14} style={{ verticalAlign: -2, marginRight: 4 }} />}
+                              {r.name}
+                            </td>
+                            <td className="r num">{r.purchased} {r.unit}</td>
+                            <td className="r num">{r.sold} {r.unit}</td>
+                            <td className="r">{r.saleAmount > 0 ? <Money value={r.saleAmount} /> : <span className="muted">—</span>}</td>
+                            <td className="r strong">
+                              <span className="num" style={{ color: out ? 'var(--danger)' : undefined }}>
+                                {r.available} {r.unit}
+                              </span>
+                            </td>
+                            <td className="r"><Money value={r.cost} /></td>
+                            <td className="r strong"><Money value={r.value} /></td>
+                          </tr>
+                          {open && (
+                            <tr>
+                              <td colSpan={7} style={{ background: '#FAFAFB', padding: '4px 12px 10px 30px' }}>
+                                {r.sales.length ? (
+                                  <table className="tbl" style={{ margin: 0 }}>
+                                    <thead>
+                                      <tr><th>Date</th><th>Bill</th><th>Customer</th>
+                                          <th className="r">Qty</th><th className="r">Rate</th><th className="r">Amount</th></tr>
+                                    </thead>
+                                    <tbody>
+                                      {r.sales.map((x) => (
+                                        <tr key={x.id} className="clickable"
+                                            onClick={() => nav(`/bill/${x.billId}`)}>
+                                          <td className="nowrap">{x.date ? fmtDate(x.date) : '—'}</td>
+                                          <td>{x.billNo}</td>
+                                          <td>{x.party || <span className="muted">—</span>}</td>
+                                          <td className="r num">{x.qty} {x.unit}</td>
+                                          <td className="r"><Money value={x.price} /></td>
+                                          <td className="r strong"><Money value={x.amount} /></td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                ) : (
+                                  <div className="small muted" style={{ padding: '8px 0' }}>
+                                    {r.sold > 0
+                                      ? `${r.sold} ${r.unit} sold, but those sales were not tied to this supplier when billed.`
+                                      : 'Nothing sold from this supplier yet.'}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 ))}
               <tfoot>
@@ -377,6 +434,7 @@ export default function SupplierLedger() {
                   <td>{stockRows.length} items</td>
                   <td className="r">{stockTotals.purchased}</td>
                   <td className="r">{stockTotals.sold}</td>
+                  <td className="r">{money(stockTotals.saleAmount)}</td>
                   <td className="r">{stockTotals.available}</td>
                   <td></td>
                   <td className="r">{money(stockTotals.value)}</td>
