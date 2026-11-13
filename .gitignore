@@ -6,3 +6,4 @@ dist
 
 # Private shop data (customer names, balances) - never commit
 old data/
+release

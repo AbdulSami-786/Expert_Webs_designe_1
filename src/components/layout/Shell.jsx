@@ -147,7 +147,7 @@ export default function Shell() {
       {/* ---------------- Desktop sidebar ---------------- */}
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <img className="logo" src="/brand/logo-mark.svg" alt="" />
+          <img className="logo" src={`${import.meta.env.BASE_URL}brand/logo-mark.svg`} alt="" />
           <span style={{ minWidth: 0 }}>
             {settings.shopName || 'Expert Webs Designs'}
             <small>Business Dashboard</small>
@@ -205,7 +205,7 @@ export default function Shell() {
 
         {/* Mobile top bar */}
         <header className="mobile-topbar">
-          <img className="logo" src="/brand/logo-mark.svg" alt="" style={{ height: 18, width: 'auto', flex: 'none' }} />
+          <img className="logo" src={`${import.meta.env.BASE_URL}brand/logo-mark.svg`} alt="" style={{ height: 18, width: 'auto', flex: 'none' }} />
           <span className="title">{pageTitle}</span>
           {!online && <span className="sync-chip offline"><WifiOff size={12} /></span>}
           {pending > 0 && <span className="sync-chip"><RefreshCw size={12} /> {pending}</span>}

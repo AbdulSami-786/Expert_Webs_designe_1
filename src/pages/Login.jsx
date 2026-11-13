@@ -32,7 +32,7 @@ export default function Login() {
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
         <div style={{ textAlign: 'center', marginBottom: 22 }}>
-          <img src="/brand/logo-horizontal-darktext.svg" alt={CONFIG.defaultShopName}
+          <img src={`${import.meta.env.BASE_URL}brand/logo-horizontal-darktext.svg`} alt={CONFIG.defaultShopName}
                style={{ display: 'block', width: 250, maxWidth: '100%', height: 'auto', margin: '0 auto 14px' }} />
           <p className="muted small" style={{ margin: '4px 0 0' }}>
             Business Dashboard

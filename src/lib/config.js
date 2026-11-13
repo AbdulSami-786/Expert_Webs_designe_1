@@ -21,35 +21,39 @@
 export const IS_DESKTOP =
   typeof navigator !== 'undefined' && /\bElectron\//.test(navigator.userAgent || '');
 
-const SCRIPT_URL = import.meta.env?.VITE_APPS_SCRIPT_URL || '';
+// Your deployed Apps Script Web App URL (the Google Sheet backend).
+const SCRIPT_URL =
+  'https://script.google.com/macros/s/AKfycbyPkrSO3jOpm8gxqGEI9-IHsdvkJDktnQGnsnPBM1EyDmdzsy7nrTLV1krhyeoBG1Ua/exec';
+
+// Google Sheets sync login. Leave both empty to keep offline-first sync off.
+// Anything written here is compiled into the program, so anyone who has the
+// program or the website can read it.
+const SYNC_USERNAME = '';
+const SYNC_PASSWORD = '';
+
+// Offline-first desktop mode needs a stored sync login (see above).
+const HAS_SYNC_AUTH = Boolean(SYNC_USERNAME);
 
 export const CONFIG = {
-  // Desktop app: 'local'. Everything is saved on the computer, so the app works
-  // with no internet at all. Whenever internet is available, sync.js uploads
-  // new work to the Sheet and downloads what other devices entered, so every
-  // device still ends up agreeing.
+  // 'sheets' — reads and writes the Google Sheet directly. Everyone signs in
+  //            with their own dashboard login, and the website and the desktop
+  //            program share the same data and the same users. Bills and
+  //            payments still survive a brief outage (api.js queues those two
+  //            and replays them).
   //
-  // Website: 'sheets'. A browser tab has no reliable local store to fall back
-  // on, so it reads and writes the Sheet directly. Bills and payments still
-  // survive a brief outage (api.js queues those two and replays them).
-  //
-  // With no VITE_APPS_SCRIPT_URL set there is no Sheet to talk to, so the
-  // website also runs on 'local' (browser storage) instead of erroring.
-  backend: (IS_DESKTOP || !SCRIPT_URL) ? 'local' : 'sheets',
+  // 'local'  — everything is saved on this computer / browser. Used when:
+  //              - SCRIPT_URL above is empty (there is no Sheet to talk to), or
+  //              - this is the desktop program AND a sync login is set above:
+  //                it then works with no internet at all and sync.js uploads
+  //                and downloads in the background.
+  backend: (!SCRIPT_URL || (IS_DESKTOP && HAS_SYNC_AUTH)) ? 'local' : 'sheets',
 
-  // Your deployed Apps Script Web App URL (https://script.google.com/macros/s/.../exec).
-  // Set it in a local .env file (see .env.example) — never commit the real value.
   appsScriptUrl: SCRIPT_URL,
 
-  // Google Sheets sync credentials (leave empty to keep sync off).
-  //
-  // Set these in a local .env file (see .env.example), not in this file.
-  // Be aware: anything read through VITE_* is compiled into the built
-  // JavaScript, so anyone who can open the dashboard can read it. Keep the
-  // dashboard itself private and do not reuse this password anywhere.
+  // Google Sheets sync credentials (empty = sync off).
   sheetsAuth: {
-    username: import.meta.env?.VITE_SHEETS_USERNAME || '',
-    password: import.meta.env?.VITE_SHEETS_PASSWORD || '',
+    username: SYNC_USERNAME,
+    password: SYNC_PASSWORD,
   },
 
   // Shown in the sidebar/top bar before Settings is saved.
@@ -64,7 +68,7 @@ export const CONFIG = {
   // the customer's phone.
   //
   // No trailing slash. Leave empty to fall back to the current address.
-  publicUrl: import.meta.env?.VITE_PUBLIC_URL || '',
+  publicUrl: '',
 
   // Seed the local backend with demo data so the dashboard is not empty
   // on first run. Set false for a clean start with your own data.
