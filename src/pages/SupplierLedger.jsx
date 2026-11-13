@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, ShoppingCart, Wallet, Undo2, Pencil, Download, Printer, Trash2, Ban, Truck, Phone,
-  HandCoins, ListChecks, Receipt, Link2,
+  HandCoins, ListChecks, Receipt, Link2, Package,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
@@ -23,6 +23,7 @@ import LineDeliveryModal, { DeliveredCount } from '../components/forms/LineDeliv
 import {
   supplierBalance, derivePurchaseBills, supplierCombinedStatement, purchaseBillLines, rangeFor,
   purchaseReceipt, lineReceivedQty, LEDGER_TABS, inLedgerTab, supplierNetBalance, deriveBills,
+  supplierStockRows,
 } from '../lib/calc';
 import { money, fmtDate, r2, norm } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
@@ -101,6 +102,23 @@ export default function SupplierLedger() {
   const rows = useMemo(() => (!term ? tabRows : tabRows.filter((r) => norm([
     r.title, r.detail, r.debit, r.credit, r.date ? fmtDate(r.date) : '', r.date,
   ].filter(Boolean).join(' ')).includes(term))), [tabRows, term]);
+
+  // Per item bought from this supplier: how much came, how much sold, how much is left.
+  const stockRows = useMemo(() => supplierStockRows(id, data)
+    .map((r) => {
+      const it = data.items.find((i) => i.id === r.itemId);
+      return { ...r, name: it?.name || 'Item', unit: it?.baseUnit || '' };
+    })
+    .filter((r) => !term || norm(r.name).includes(term))
+    .sort((a, b) => a.name.localeCompare(b.name)), [id, data, term]);
+  const inStockRows = stockRows.filter((r) => r.available > 0);
+  const noStockRows = stockRows.filter((r) => !(r.available > 0));
+  const stockTotals = useMemo(() => ({
+    purchased: r2(stockRows.reduce((s, r) => s + r.purchased, 0)),
+    sold: r2(stockRows.reduce((s, r) => s + r.sold, 0)),
+    available: r2(stockRows.reduce((s, r) => s + r.available, 0)),
+    value: r2(stockRows.reduce((s, r) => s + r.value, 0)),
+  }), [stockRows]);
 
   const totals = useMemo(() => ({
     bought: r2(bills.filter((b) => b.status !== 'voided').reduce((s, b) => s + b.total, 0)),
@@ -312,6 +330,62 @@ export default function SupplierLedger() {
         <Stat label="Total paid" value={money(totals.paid)} icon={Wallet} tone="#16A34A" />
         <Stat label="Returned to supplier" value={money(totals.returned)} icon={Undo2} tone="#F59E0B" />
       </div>
+
+      <Card title="Stock from this supplier"
+            subtitle={`${inStockRows.length} items available · ${noStockRows.length} out of stock · ${money(stockTotals.value)} stock left at cost`}
+            tight>
+        {!stockRows.length ? (
+          <Empty icon={Package} title={term ? 'No matching items' : 'No stock bought yet'}
+                 message={term ? `Nothing matches "${q}".` : 'Items you buy from this supplier will show here, with how much is sold and left.'} />
+        ) : (
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Item</th><th className="r">Bought</th><th className="r">Sold</th>
+                  <th className="r">Available</th><th className="r">Cost</th><th className="r">Stock value</th>
+                </tr>
+              </thead>
+              {[['Available', inStockRows, false], ['Out of stock', noStockRows, true]]
+                .filter(([, list]) => list.length > 0)
+                .map(([label, list, out]) => (
+                  <tbody key={label}>
+                    <tr>
+                      <td colSpan={6} style={{ fontWeight: 700, background: 'var(--bg-subtle, rgba(0,0,0,0.03))',
+                                               color: out ? 'var(--danger)' : undefined }}>
+                        {label} <span className="muted small" style={{ fontWeight: 500 }}>({list.length})</span>
+                      </td>
+                    </tr>
+                    {list.map((r) => (
+                      <tr key={r.itemId}>
+                        <td style={{ fontWeight: 600 }}>{r.name}</td>
+                        <td className="r num">{r.purchased} {r.unit}</td>
+                        <td className="r num">{r.sold} {r.unit}</td>
+                        <td className="r strong">
+                          <span className="num" style={{ color: out ? 'var(--danger)' : undefined }}>
+                            {r.available} {r.unit}
+                          </span>
+                        </td>
+                        <td className="r"><Money value={r.cost} /></td>
+                        <td className="r strong"><Money value={r.value} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                ))}
+              <tfoot>
+                <tr>
+                  <td>{stockRows.length} items</td>
+                  <td className="r">{stockTotals.purchased}</td>
+                  <td className="r">{stockTotals.sold}</td>
+                  <td className="r">{stockTotals.available}</td>
+                  <td></td>
+                  <td className="r">{money(stockTotals.value)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </Card>
 
       <Card title="Purchase bills" subtitle="Payments made against a bill settle that bill; other payments settle the oldest first" tight>
         {bills.length > 0 && !shownBills.length ? (

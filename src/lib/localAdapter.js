@@ -864,6 +864,8 @@ async function perform(action, payload = {}) {
           // out, so an existing delivery state is preserved unless the payload
           // deliberately changes it.
           delivery: b.delivery || old.delivery || 'pending',
+          // An instalment plan is kept unless the caller sends a new one.
+          installPlan: b.installPlan !== undefined ? String(b.installPlan || '') : (old.installPlan || ''),
         };
         d.bills[i] = bill;
         // What had already gone out, per item, so an edit does not forget it.
@@ -888,6 +890,8 @@ async function perform(action, payload = {}) {
           // the other way would show a shop full of undelivered bills that
           // nobody would then trust.
           delivery: b.delivery === 'pending' ? 'pending' : 'delivered',
+          // JSON {base, parts:[{due, amount}]} when the credit is paid in instalments.
+          installPlan: String(b.installPlan || ''),
         };
         d.bills.push(bill);
         logActivity(d, 'bill', bill.id, 'create', `Created Bill ${bill.billNo}`);
@@ -918,6 +922,8 @@ async function perform(action, payload = {}) {
           costPriceAtSale: r2(l.costPriceAtSale ?? item?.costPrice ?? 0),
           lineTotal: r2((Number(l.qty) || 0) * (Number(l.price) || 0)),
           deliveredQty: r2(delivered),
+          // Which supplier's stock this was sold from ('' = any, oldest first).
+          supplierId: l.supplierId || '',
         });
 
         // Remember this party's price for this item (FR-3 auto-fill source)

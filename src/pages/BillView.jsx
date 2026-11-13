@@ -14,7 +14,7 @@ import {
 import PaymentModal from '../components/forms/PaymentModal';
 import ReturnModal from '../components/forms/ReturnModal';
 import LineDeliveryModal, { DeliveredCount } from '../components/forms/LineDeliveryModal';
-import { deriveBills, billDelivery, lineDeliveredQty } from '../lib/calc';
+import { deriveBills, billDelivery, lineDeliveredQty, installmentStatus } from '../lib/calc';
 import { money, fmtDate, fmtDateTime, waLink, totalQtyLabel } from '../lib/format';
 import { printBill, downloadBillPDF } from '../lib/exporters';
 
@@ -434,6 +434,31 @@ export default function BillView() {
               </div>
             )}
           </Card>
+
+          {(() => {
+            const inst = state.status !== 'voided' ? installmentStatus(bill, state.paid) : null;
+            if (!inst) return null;
+            const tone = { paid: 'paid', overdue: 'due', soon: 'partial', upcoming: 'partial' };
+            const label = { paid: 'Paid', overdue: 'Overdue', soon: 'Due soon', upcoming: 'Upcoming' };
+            return (
+              <Card title="Instalments" subtitle="Payments on this bill cover them in order" tight>
+                <table className="tbl">
+                  <thead><tr><th>#</th><th>Due</th><th className="r">Amount</th><th className="r">Left</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {inst.parts.map((p, i) => (
+                      <tr key={p.due + i}>
+                        <td>{i + 1}</td>
+                        <td className="nowrap">{fmtDate(p.due)}</td>
+                        <td className="r">{money(p.amount)}</td>
+                        <td className="r strong">{p.left > 0 ? money(p.left) : '—'}</td>
+                        <td><Pill status={tone[p.status]} label={label[p.status]} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            );
+          })()}
 
           <Card title="Party">
             <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 3 }}>{party?.name}</div>

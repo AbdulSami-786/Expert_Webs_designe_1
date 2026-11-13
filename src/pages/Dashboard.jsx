@@ -19,7 +19,7 @@ import {
 } from '../components/ui';
 import {
   deriveBills, partyDue, reorderSuggestion, accountBalances, itemStock,
-  rangeFor, inRange, grossProfit, collectedPayments,
+  rangeFor, inRange, grossProfit, collectedPayments, installmentAlerts,
 } from '../lib/calc';
 import {
   money, fmtDate, pctChange, waLink, AGING_META, r2, daysOverdue,
@@ -37,6 +37,9 @@ export default function Dashboard() {
   const range = useMemo(() => rangeFor(preset, custom), [preset, custom]);
 
   const derived = useMemo(() => deriveBills(data.bills, data), [data]);
+
+  // Instalments overdue or falling due in the next 7 days.
+  const instAlerts = useMemo(() => installmentAlerts(derived, 7), [derived]);
 
   /* ---------------- Stats for the selected range (FR-45) ---------------- */
   const stats = useMemo(() => {
@@ -230,6 +233,39 @@ export default function Dashboard() {
       {/* ---------------- Row 2 ---------------- */}
       <div className="grid-2 mb-2 dash-row-2" style={{ alignItems: 'start' }}>
         <div className="col">
+          {instAlerts.length > 0 && (
+            <Card title="Instalment Alerts" tight
+                  subtitle={`${instAlerts.filter((a) => a.status === 'overdue').length} overdue · ${instAlerts.filter((a) => a.status === 'soon').length} due within 7 days`}>
+              {instAlerts.slice(0, 8).map((a) => {
+                const late = a.status === 'overdue';
+                const who = data.parties.find((p) => p.id === a.bill.partyId);
+                return (
+                  <div className="alert-row" key={`${a.bill.id}-${a.due}`} style={{ cursor: 'pointer' }}
+                       onClick={() => nav(`/bill/${a.bill.id}`)}>
+                    <span className={`ico ${late ? 'danger' : 'warning'}`}><CalendarCheck size={15} /></span>
+                    <div className="body">
+                      <div className="t">{who?.name || 'Party'}</div>
+                      <div className="s">
+                        Bill {a.bill.billNo} · instalment due {fmtDate(a.due)} ·{' '}
+                        {late ? `${-a.days} day${a.days === -1 ? '' : 's'} late`
+                          : a.days === 0 ? 'today' : `in ${a.days} day${a.days === 1 ? '' : 's'}`}
+                      </div>
+                    </div>
+                    <Money value={a.left} />
+                    <a className="btn btn-ghost btn-sm" title="Send WhatsApp reminder"
+                       onClick={(e) => e.stopPropagation()}
+                       href={waLink(who?.phone,
+                         `Assalam o Alaikum ${who?.name || ''}, ${settings.shopName} ki taraf se yaad dahani: `
+                         + `Bill ${a.bill.billNo} ki qist ${money(a.left)} ${fmtDate(a.due)} ko ${late ? 'due thi' : 'due hai'}. Shukriya.`)}
+                       target="_blank" rel="noreferrer">
+                      <Send size={14} />
+                    </a>
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+
           <Card title="Overdue Payments" tight
                 subtitle={overdue.length ? `${overdue.length} bill${overdue.length === 1 ? '' : 's'} past due date` : undefined}
                 actions={<Button size="sm" onClick={() => nav('/outstanding')}>View all</Button>}>

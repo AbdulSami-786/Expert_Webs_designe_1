@@ -527,6 +527,206 @@ export function itemStock(itemId, {
   return r2(opening + inQty - outQty + backQty - lostQty - sentBackQty);
 }
 
+/**
+ * Total stock that has come in for an item to date: opening stock plus every
+ * purchase (cancelled purchase bills excluded). Base-unit quantity.
+ */
+export function itemReceived(itemId, { purchases = [], items = [], purchaseBills = [] } = {}) {
+  const voidedPurchase = new Set(
+    purchaseBills.filter((b) => b.status === 'voided').map((b) => b.id)
+  );
+  const item = items.find((i) => i.id === itemId);
+  const opening = Number(item?.openingStock) || 0;
+  const inQty = purchases
+    .filter((p) => p.itemId === itemId && !voidedPurchase.has(p.purchaseBillId))
+    .reduce((s, p) => s + (Number(p.qty) || 0), 0);
+  return r2(opening + inQty);
+}
+
+/**
+ * What came from one supplier, item by item: bought, sold, and still on the
+ * shelf. A sale line that names a supplier comes off that supplier's stock; sales
+ * that do not, and anything lost, are handed out oldest-purchase-first (opening
+ * stock goes first). Goods sent back to this supplier come off their own lines
+ * before that. Base-unit quantities.
+ * Returns [{ itemId, purchased, returned, sold, available, cost, value }].
+ */
+export function supplierStockRows(supplierId, {
+  purchases = [], purchaseBills = [], supplierReturns = [], items = [],
+  billItems = [], bills = [], returns = [], stockLoss = [],
+} = {}) {
+  const voidedBill = new Set(bills.filter((b) => b.status === 'voided').map((b) => b.id));
+  const voidedPurchase = new Set(purchaseBills.filter((b) => b.status === 'voided').map((b) => b.id));
+  const live = purchases.filter((p) => !voidedPurchase.has(p.purchaseBillId));
+  const itemIds = [...new Set(live.filter((p) => p.supplierId === supplierId).map((p) => p.itemId))];
+
+  return itemIds.map((itemId) => {
+    const item = items.find((i) => i.id === itemId);
+
+    // Lines of this item from every supplier, oldest first.
+    const lines = live
+      .filter((p) => p.itemId === itemId)
+      .map((p) => ({ sid: p.supplierId, date: String(p.date || ''), id: String(p.id), left: Number(p.qty) || 0 }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+
+    // Goods sent back to a supplier leave that supplier's oldest lines first.
+    const returnedBy = {};
+    supplierReturns.filter((r) => r.itemId === itemId).forEach((r) => {
+      returnedBy[r.supplierId] = (returnedBy[r.supplierId] || 0) + (Number(r.qty) || 0);
+    });
+    const retLeft = { ...returnedBy };
+    lines.forEach((l) => {
+      const cut = Math.min(l.left, retLeft[l.sid] || 0);
+      l.left -= cut;
+      if (retLeft[l.sid]) retLeft[l.sid] -= cut;
+    });
+
+    // Sales and restocked returns. A sale line that names a supplier comes off
+    // THAT supplier's stock; a line that does not goes into a shared pool that
+    // is handed out oldest-purchase-first, together with anything written off.
+    const soldBy = {};        // supplierId -> base qty sold from that supplier
+    let poolOut = 0;
+    billItems
+      .filter((bi) => bi.itemId === itemId && !voidedBill.has(bi.billId))
+      .forEach((bi) => {
+        const q = (Number(bi.qty) || 0) * unitFactor(item, bi.unit);
+        if (bi.supplierId) soldBy[bi.supplierId] = (soldBy[bi.supplierId] || 0) + q;
+        else poolOut += q;
+      });
+    returns.filter((r) => r.itemId === itemId && r.restock).forEach((r) => {
+      const sold = billItems.filter((bi) => bi.billId === r.billId && bi.itemId === r.itemId);
+      const q = (Number(r.qty) || 0) * unitFactor(item, sold[0]?.unit);
+      const sid = sold.find((bi) => bi.supplierId)?.supplierId;
+      if (sid) soldBy[sid] = (soldBy[sid] || 0) - q;
+      else poolOut -= q;
+    });
+    const lost = stockLoss.filter((l) => l.itemId === itemId)
+      .reduce((s, l) => s + (Number(l.qty) || 0), 0);
+
+    const takenBy = {};
+    // 1) Named-supplier sales leave that supplier's own lines, oldest first.
+    //    More than they hold spills into the shared pool rather than going negative.
+    Object.keys(soldBy).forEach((sid) => {
+      let want = Math.max(0, soldBy[sid]);
+      lines.filter((l) => l.sid === sid).forEach((l) => {
+        const take = Math.min(l.left, want);
+        l.left -= take;
+        want -= take;
+        takenBy[sid] = (takenBy[sid] || 0) + take;
+      });
+      poolOut += want;
+    });
+    // 2) The shared pool: opening stock is used before any purchase.
+    let toAllocate = Math.max(0, poolOut + lost - (Number(item?.openingStock) || 0));
+    lines.forEach((l) => {
+      const take = Math.min(l.left, toAllocate);
+      l.left -= take;
+      toAllocate -= take;
+      takenBy[l.sid] = (takenBy[l.sid] || 0) + take;
+    });
+
+    const mine = live.filter((p) => p.supplierId === supplierId && p.itemId === itemId);
+    const purchased = r2(mine.reduce((s, p) => s + (Number(p.qty) || 0), 0));
+    const available = r2(lines.filter((l) => l.sid === supplierId).reduce((s, l) => s + l.left, 0));
+    const cost = purchased > 0
+      ? r2(mine.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.costPrice) || 0), 0) / purchased)
+      : 0;
+    return {
+      itemId, purchased, returned: r2(returnedBy[supplierId] || 0), sold: r2(takenBy[supplierId] || 0),
+      available, cost, value: r2(available * cost),
+    };
+  });
+}
+
+/**
+ * Stock on hand by supplier for every item, for picking where to sell from.
+ * Map of itemId -> [{ supplierId, name, available, cost }] (only suppliers that
+ * still hold some), largest holding first.
+ */
+export function stockBySupplier(data = {}) {
+  const map = new Map();
+  (data.suppliers || []).filter((s) => s.status !== 'archived').forEach((s) => {
+    supplierStockRows(s.id, data).forEach((r) => {
+      if (!(r.available > 0)) return;
+      if (!map.has(r.itemId)) map.set(r.itemId, []);
+      map.get(r.itemId).push({ supplierId: s.id, name: s.name, available: r.available, cost: r.cost });
+    });
+  });
+  map.forEach((list) => list.sort((a, b) => b.available - a.available));
+  return map;
+}
+
+/* ========================================================================
+   Instalments — a credit bill paid in parts on set dates
+   ======================================================================== */
+
+/** The plan stored on a bill, or null. Stored as JSON text so a Sheet cell can hold it. */
+export function parseInstallPlan(bill) {
+  try {
+    const p = typeof bill?.installPlan === 'string' ? JSON.parse(bill.installPlan || 'null') : bill?.installPlan;
+    return p && Array.isArray(p.parts) && p.parts.length ? p : null;
+  } catch { return null; }
+}
+
+/**
+ * Build an equal-parts plan. `credit` is what is left to pay after what was paid
+ * at billing (`base`); the last part takes the rounding, so parts add up exactly.
+ * interval: 'weekly' | 'fortnight' | 'monthly'.
+ */
+export function buildInstallPlan({ credit, base = 0, count, firstDue, interval = 'monthly' }) {
+  const n = Math.max(1, Math.floor(Number(count) || 1));
+  const each = Math.floor((Number(credit) / n) * 100) / 100;
+  const parts = [];
+  let d = new Date(`${firstDue}T00:00:00`);
+  for (let i = 0; i < n; i++) {
+    const day = d.getDate();
+    const due = new Date(d);
+    if (interval === 'monthly') {
+      due.setMonth(d.getMonth() + i);
+      if (due.getDate() !== day) due.setDate(0);       // 31 Jan + 1 month -> end of Feb
+    } else {
+      due.setDate(d.getDate() + i * (interval === 'weekly' ? 7 : 15));
+    }
+    const iso = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}-${String(due.getDate()).padStart(2, '0')}`;
+    parts.push({ due: iso, amount: i === n - 1 ? r2(Number(credit) - each * (n - 1)) : each });
+  }
+  return { base: r2(base), parts };
+}
+
+/**
+ * Where an instalment plan stands. Money paid on the bill beyond `base` covers
+ * the parts in order. Each part: { due, amount, paid, left, status } with status
+ * 'paid' | 'overdue' | 'soon' (due within `soonDays`) | 'upcoming'.
+ */
+export function installmentStatus(bill, paidTotal, today = new Date(), soonDays = 7) {
+  const plan = parseInstallPlan(bill);
+  if (!plan) return null;
+  const t = new Date(today); t.setHours(0, 0, 0, 0);
+  let covered = Math.max(0, r2((Number(paidTotal) || 0) - (Number(plan.base) || 0)));
+  const parts = plan.parts.map((p) => {
+    const amount = Number(p.amount) || 0;
+    const paid = r2(Math.min(amount, covered));
+    covered = r2(covered - paid);
+    const left = r2(amount - paid);
+    const days = Math.round((new Date(`${p.due}T00:00:00`) - t) / 86400000);
+    const status = left <= 0.004 ? 'paid' : days < 0 ? 'overdue' : days <= soonDays ? 'soon' : 'upcoming';
+    return { due: p.due, amount, paid, left, status, days };
+  });
+  return { parts, next: parts.find((p) => p.status !== 'paid') || null };
+}
+
+/** Every unpaid instalment that is overdue or due soon, across live bills, most urgent first. */
+export function installmentAlerts(derivedBills = [], soonDays = 7) {
+  const out = [];
+  derivedBills.filter((b) => b.status !== 'voided').forEach((b) => {
+    const st = installmentStatus(b, b.paid, new Date(), soonDays);
+    if (!st) return;
+    st.parts.filter((p) => p.status === 'overdue' || p.status === 'soon')
+      .forEach((p) => out.push({ bill: b, ...p }));
+  });
+  return out.sort((a, b) => a.days - b.days);
+}
+
 /** Profit per bill line uses costPriceAtSale captured at billing (FR-38). */
 export function lineProfit(bi, item = null) {
   const qty = Number(bi.qty) || 0;

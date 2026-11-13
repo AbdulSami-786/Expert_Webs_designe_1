@@ -10,14 +10,14 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Plus, Trash2, History, Save, AlertTriangle, UserPlus, PackagePlus,
-  Wallet, CreditCard, X,
+  Wallet, CreditCard, X, CalendarClock,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
 import ChequeFields, { blankCheque } from '../components/forms/ChequeFields';
 import {
   Card, Button, Field, Input, Select, TypeAhead, Modal, Pill, Money,
-  Empty, PageHead, Textarea, Confirm,
+  Empty, PageHead, Textarea, Confirm, SearchBar,
 } from '../components/ui';
 import PartyForm from '../components/forms/PartyForm';
 import ItemForm from '../components/forms/ItemForm';
@@ -25,6 +25,7 @@ import BillReceiptModal from '../components/BillReceiptModal';
 import { printBill } from '../lib/exporters';
 import {
   billTotals, deriveBills, partyAdvanceBalance, partyDue, itemStock, billState,
+  stockBySupplier, buildInstallPlan,
 } from '../lib/calc';
 import {
   money, todayISO, addDays, fmtDate, r2, uid, applyRounding, unitFactor,
@@ -57,8 +58,18 @@ export default function NewBill() {
   // common case, so the biller flags the exception rather than confirming the
   // rule on every bill.
   const [pending, setPending] = useState(() => f0?.pending ?? false);
+  // Credit paid in parts on set dates (instalments). Off for an ordinary bill.
+  const [installOn, setInstallOn] = useState(() => f0?.installOn ?? false);
+  const [installCount, setInstallCount] = useState(() => f0?.installCount ?? 3);
+  const [installFirst, setInstallFirst] = useState(() => f0?.installFirst ?? addDays(todayISO(), 30));
+  const [installEvery, setInstallEvery] = useState(() => f0?.installEvery ?? 'monthly');
   const [busy, setBusy] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+
+  // Item picker grid
+  const [gridQ, setGridQ] = useState('');
+  const [gridCat, setGridCat] = useState('all');
+  const [gridLimit, setGridLimit] = useState(30);
 
   const [showParty, setShowParty] = useState(false);
   const [showItem, setShowItem] = useState(false);
@@ -93,6 +104,7 @@ export default function NewBill() {
         .map((bi) => ({
           key: uid('l'), itemId: bi.itemId, qty: String(bi.qty),
           price: String(bi.price), unit: bi.unit, costPriceAtSale: bi.costPriceAtSale,
+          supplierId: bi.supplierId || '',
         }))
     );
     // Existing payments stay attached to the bill; editing adjusts items/total.
@@ -100,6 +112,35 @@ export default function NewBill() {
   }, [editingBill, data.billItems]);
 
   const party = activeParties.find((p) => p.id === partyId) || data.parties.find((p) => p.id === partyId);
+
+  /* ---------------- Stock by supplier ----------------
+     Where each item can be sold from. When editing, this bill's own lines are
+     taken out first, so what it already sold counts as available again. */
+  const stockData = useMemo(() => (editId
+    ? { ...data, billItems: data.billItems.filter((bi) => bi.billId !== editId) }
+    : data), [data, editId]);
+  const supStock = useMemo(() => stockBySupplier(stockData), [stockData]);
+  const onHand = useMemo(() => {
+    const m = new Map();
+    activeItems.forEach((i) => m.set(i.id, itemStock(i.id, stockData)));
+    return m;
+  }, [activeItems, stockData]);
+  // Latest selling price per item (any party), for items the party has not bought yet.
+  const latestSale = useMemo(() => {
+    const m = new Map();
+    data.partyItemPrices.forEach((x) => {
+      const cur = m.get(x.itemId);
+      if (!cur || String(x.date) >= String(cur.date)) m.set(x.itemId, x);
+    });
+    return m;
+  }, [data.partyItemPrices]);
+  /** A supplier is picked for the line when only one holds the item; else left on "any". */
+  const defaultSupplier = (itemId) => {
+    const list = supStock.get(itemId) || [];
+    return list.length === 1 ? list[0].supplierId : '';
+  };
+  const supplierCost = (itemId, supplierId) => (supplierId
+    ? (supStock.get(itemId) || []).find((x) => x.supplierId === supplierId)?.cost : undefined);
 
   /* Due date follows the party's own default credit days (FR-8) */
   useEffect(() => {
@@ -151,14 +192,16 @@ export default function NewBill() {
     const item = data.items.find((i) => i.id === itemId);
     const last = itemId && partyId ? lastPriceFor(partyId, itemId) : null;
     const key = uid('l');
+    const supplierId = itemId ? defaultSupplier(itemId) : '';
     setLines((ls) => [...ls, {
       key,
       itemId,
       qty: '1',
       price: last ? String(last.price) : '',
       unit: last?.unit || item?.baseUnit || 'Piece',
-      costPriceAtSale: item?.costPrice ?? 0,
+      costPriceAtSale: supplierCost(itemId, supplierId) ?? item?.costPrice ?? 0,
       autoFilled: Boolean(last),
+      supplierId,
     }]);
     // Only an empty line needs the cursor. Adding a line from a favourite chip
     // already knows its item, so stealing focus there would pull the biller
@@ -213,16 +256,39 @@ export default function NewBill() {
   const pickItem = (key, itemId) => {
     const item = data.items.find((i) => i.id === itemId);
     const last = partyId ? lastPriceFor(partyId, itemId) : null;
+    const supplierId = defaultSupplier(itemId);
     setLine(key, {
       itemId,
       price: last ? String(last.price) : '',
       unit: last?.unit || item?.baseUnit || 'Piece',
-      costPriceAtSale: item?.costPrice ?? 0,
+      costPriceAtSale: supplierCost(itemId, supplierId) ?? item?.costPrice ?? 0,
       autoFilled: Boolean(last),
+      supplierId,
     });
   };
 
   const removeLine = (key) => setLines((ls) => ls.filter((l) => l.key !== key));
+
+  /** Tapping a tile adds the item, or one more of it if it is already on the bill. */
+  const addFromTile = (itemId) => {
+    const existing = lines.find((l) => l.itemId === itemId);
+    if (existing) setLine(existing.key, { qty: String((Number(existing.qty) || 0) + 1) });
+    else addLine(itemId);
+  };
+
+  const gridCategories = useMemo(
+    () => [...new Set(activeItems.map((i) => i.category).filter(Boolean))].sort(),
+    [activeItems],
+  );
+  const gridItems = useMemo(() => {
+    const t = gridQ.trim().toLowerCase();
+    return activeItems
+      .filter((i) => gridCat === 'all' || i.category === gridCat)
+      .filter((i) => !t || `${i.name} ${i.category || ''}`.toLowerCase().includes(t)
+        || (supStock.get(i.id) || []).some((x) => x.name.toLowerCase().includes(t)))
+      // Items in stock first, then by name.
+      .sort((a, b) => ((onHand.get(b.id) > 0) - (onHand.get(a.id) > 0)) || a.name.localeCompare(b.name));
+  }, [activeItems, gridQ, gridCat, onHand, supStock]);
 
   /**
    * Price-change alert (FR-5): warn when an entered price deviates from this
@@ -274,6 +340,19 @@ export default function NewBill() {
 
   const overpaid = r2(paidNow + Number(applyAdvance || 0) - totals.total);
 
+  // The instalment plan, when on and there is credit to spread.
+  const installPlan = useMemo(() => {
+    if (!installOn || editingBill || creditAmount <= 0 || !installFirst) return null;
+    const n = Math.floor(Number(installCount));
+    if (!(n >= 2)) return null;
+    return buildInstallPlan({
+      credit: creditAmount, base: r2(totals.total - creditAmount),
+      count: Math.min(n, 60), firstDue: installFirst, interval: installEvery,
+    });
+  }, [installOn, editingBill, creditAmount, installCount, installFirst, installEvery, totals.total]);
+  // The whole bill is due when its last instalment falls due.
+  const effectiveDue = installPlan ? installPlan.parts[installPlan.parts.length - 1].due : dueDate;
+
   /* The bill just saved, with its paid/due worked out.
      Derived rather than taken from the save response, because the receipt has
      to show what was actually recorded — including any payment or advance
@@ -312,7 +391,9 @@ export default function NewBill() {
   /** Everything the form holds for one bill, as a plain object. */
   const snapshot = useCallback(() => ({
     partyId, date, lines, pays, dueDate, applyAdvance, note, pending,
-  }), [partyId, date, lines, pays, dueDate, applyAdvance, note, pending]);
+    installOn, installCount, installFirst, installEvery,
+  }), [partyId, date, lines, pays, dueDate, applyAdvance, note, pending,
+    installOn, installCount, installFirst, installEvery]);
 
   const restore = useCallback((f) => {
     setPartyId(f?.partyId ?? '');
@@ -323,6 +404,10 @@ export default function NewBill() {
     setApplyAdvance(f?.applyAdvance ?? 0);
     setNote(f?.note ?? '');
     setPending(f?.pending ?? false);
+    setInstallOn(f?.installOn ?? false);
+    setInstallCount(f?.installCount ?? 3);
+    setInstallFirst(f?.installFirst ?? addDays(todayISO(), 30));
+    setInstallEvery(f?.installEvery ?? 'monthly');
   }, [settings.defaultCreditDays]);
 
   /* Keep every unsaved tab in this device's storage as it changes. A saved bill
@@ -427,7 +512,7 @@ export default function NewBill() {
       date: f.date,
       lines: good.map((l) => ({
         itemId: l.itemId, qty: Number(l.qty), price: Number(l.price),
-        unit: l.unit, costPriceAtSale: l.costPriceAtSale,
+        unit: l.unit, costPriceAtSale: l.costPriceAtSale, supplierId: l.supplierId || '',
       })),
       payments: (f.pays || [])
         .filter((p) => Number(p.amount) > 0)
@@ -448,6 +533,9 @@ export default function NewBill() {
     if (busy) return; // guard: a second click must not save the bill twice
     if (!partyId) return toast('Select a party first', 'error');
     if (!validLines.length) return toast('Add at least one item', 'error');
+    if (installOn && !editingBill && creditAmount > 0 && !installPlan) {
+      return toast('Instalments: enter at least 2 instalments and the first due date', 'error');
+    }
 
     setBusy(true);
     try {
@@ -457,7 +545,7 @@ export default function NewBill() {
         date,
         lines: validLines.map((l) => ({
           itemId: l.itemId, qty: Number(l.qty), price: Number(l.price),
-          unit: l.unit, costPriceAtSale: l.costPriceAtSale,
+          unit: l.unit, costPriceAtSale: l.costPriceAtSale, supplierId: l.supplierId || '',
         })),
         payments: pays
           .filter((p) => Number(p.amount) > 0)
@@ -466,9 +554,11 @@ export default function NewBill() {
         subtotal: totals.subtotal,
         roundOff: totals.roundOff,
         total: totals.total,
-        dueDate: creditAmount > 0 ? dueDate : '',
+        dueDate: creditAmount > 0 ? effectiveDue : '',
         note,
         delivery: pending ? 'pending' : 'delivered',
+        // Only a new bill sets a plan; editing leaves the stored one alone.
+        ...(editingBill ? {} : { installPlan: installPlan ? JSON.stringify(installPlan) : '' }),
       };
 
       const bill = await mutate(
@@ -596,7 +686,7 @@ export default function NewBill() {
                 <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
               </Field>
 
-              {creditAmount > 0 && (
+              {creditAmount > 0 && !installOn && (
                 <Field label="Credit due date" hint="Editable — defaults from this party's terms">
                   <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
                 </Field>
@@ -625,6 +715,70 @@ export default function NewBill() {
                   above their {money(creditWarning.limit)} credit limit.
                 </span>
               </div>
+            )}
+          </Card>
+
+          <Card
+            title="Pick items"
+            subtitle="Tap an item to add it to the bill — price, suppliers and stock shown on each"
+            actions={
+              <Select value={gridCat} style={{ width: 150 }}
+                      onChange={(e) => { setGridCat(e.target.value); setGridLimit(30); }}>
+                <option value="all">All categories</option>
+                {gridCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+              </Select>
+            }
+          >
+            <div className="mb-2">
+              <SearchBar value={gridQ} onChange={(v) => { setGridQ(v); setGridLimit(30); }}
+                         placeholder="Search item, category or supplier…" />
+            </div>
+            {!gridItems.length ? (
+              <div className="small muted">No items match.</div>
+            ) : (
+              <>
+                <div className="item-grid">
+                  {gridItems.slice(0, gridLimit).map((i) => {
+                    const stockQty = onHand.get(i.id) ?? 0;
+                    const sups = supStock.get(i.id) || [];
+                    const pp = partyId ? lastPriceFor(partyId, i.id) : null;
+                    const price = pp?.price ?? latestSale.get(i.id)?.price;
+                    const inBill = lines.filter((l) => l.itemId === i.id)
+                      .reduce((t, l) => t + (Number(l.qty) || 0), 0);
+                    return (
+                      <button key={i.id} type="button" onClick={() => addFromTile(i.id)}
+                              className={`item-tile ${stockQty > 0 ? '' : 'out'}`}
+                              title={`Add ${i.name}`}>
+                        <span className="nm">{i.name}</span>
+                        <span className="pr">
+                          {price ? money(price) : <span className="muted small" style={{ fontWeight: 500 }}>Cost {money(i.costPrice)}</span>}
+                          {pp && <span className="muted small" style={{ fontWeight: 500 }}> · {party?.name?.split(' ')[0]}'s rate</span>}
+                        </span>
+                        <span className="sup">
+                          {sups.length
+                            ? sups.slice(0, 3).map((x) => `${x.name} (${x.available})`).join(' · ')
+                              + (sups.length > 3 ? ` +${sups.length - 3}` : '')
+                            : 'No supplier stock'}
+                        </span>
+                        <span className="oth">
+                          {stockQty > 0
+                            ? <span>Stock {stockQty} {i.baseUnit}</span>
+                            : <span className="bad">Out of stock</span>}
+                          {i.category && <span>{i.category}</span>}
+                        </span>
+                        {inBill > 0 && <span className="in-bill">In bill × {inBill}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                {gridItems.length > gridLimit && (
+                  <div className="mt-2" style={{ textAlign: 'center' }}>
+                    <Button size="sm" onClick={() => setGridLimit((n) => n + 30)}>
+                      Show more ({gridItems.length - gridLimit} left)
+                    </Button>
+                  </div>
+                )}
+              </>
             )}
           </Card>
 
@@ -665,7 +819,14 @@ export default function NewBill() {
                   const item = data.items.find((i) => i.id === l.itemId);
                   const dev = checkPriceDeviation(l);
                   const last = l.itemId && partyId ? lastPriceFor(partyId, l.itemId) : null;
-                  const stock = l.itemId ? itemStock(l.itemId, data) : null;
+                  const stock = l.itemId ? itemStock(l.itemId, stockData) : null;
+                  // Suppliers holding this item, and the one this line sells from.
+                  const sups = l.itemId ? (supStock.get(l.itemId) || []) : [];
+                  const chosen = l.supplierId ? sups.find((x) => x.supplierId === l.supplierId) : null;
+                  const supName = l.supplierId
+                    ? (chosen?.name || data.suppliers.find((x) => x.id === l.supplierId)?.name || 'supplier') : '';
+                  // What this line can draw on: one supplier's stock, or everything.
+                  const avail = l.supplierId ? (chosen?.available ?? 0) : stock;
 
                   // Units available for this line: base + alt if a conversion exists
                   const unitOpts = item
@@ -716,6 +877,28 @@ export default function NewBill() {
                                  onChange={(e) => setLine(l.key, { price: e.target.value, autoFilled: false })} />
                         </div>
 
+                        {l.itemId && (sups.length > 0 || l.supplierId) && (
+                          <div style={{ width: 232 }} className="line-supplier">
+                            <label className="small muted">Sell from supplier</label>
+                            <Select value={l.supplierId || ''}
+                                    onChange={(e) => {
+                                      const sid = e.target.value;
+                                      setLine(l.key, {
+                                        supplierId: sid,
+                                        costPriceAtSale: supplierCost(l.itemId, sid) ?? item?.costPrice ?? 0,
+                                      });
+                                    }}>
+                              <option value="">Any supplier (oldest first)</option>
+                              {sups.map((x) => (
+                                <option key={x.supplierId} value={x.supplierId}>{x.name} — {x.available} left</option>
+                              ))}
+                              {l.supplierId && !chosen && (
+                                <option value={l.supplierId}>{supName} — 0 left</option>
+                              )}
+                            </Select>
+                          </div>
+                        )}
+
                         <div className="spacer hide-mobile" />
 
                         <div className="line-amount" style={{ textAlign: 'right' }}>
@@ -745,16 +928,16 @@ export default function NewBill() {
                         )}
                         {stock !== null && (
                           // Stock is in base units; a line in Bags is converted first.
-                          (Number(l.qty) || 0) * unitFactor(item, l.unit) > stock ? (
+                          (Number(l.qty) || 0) * unitFactor(item, l.unit) > avail ? (
                             // Oversell is allowed (goods may be in transit), but it
                             // must never happen silently — stock would go negative.
                             <span className="pill pill-due">
                               <AlertTriangle size={11} />
-                              Only {stock} {item?.baseUnit} in stock
+                              Only {avail} {item?.baseUnit} in stock{supName ? ` from ${supName}` : ''}
                             </span>
                           ) : (
                             <span className="small muted">
-                              Stock: {stock} {item?.baseUnit}
+                              Stock: {avail} {item?.baseUnit}{supName ? ` (${supName})` : ''}
                             </span>
                           )
                         )}
@@ -897,7 +1080,9 @@ export default function NewBill() {
                   <CreditCard size={16} color="#B91C1C" style={{ flex: 'none' }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, color: '#B91C1C' }}>On Credit</div>
-                    <div className="small" style={{ color: '#B91C1C' }}>Due {fmtDate(dueDate)}</div>
+                    <div className="small" style={{ color: '#B91C1C' }}>
+                      {installPlan ? `${installPlan.parts.length} instalments · last due ${fmtDate(effectiveDue)}` : `Due ${fmtDate(dueDate)}`}
+                    </div>
                   </div>
                   <span className="money" style={{ color: '#B91C1C', fontSize: 16 }}>{money(creditAmount)}</span>
                 </div>
@@ -917,6 +1102,62 @@ export default function NewBill() {
                 </div>
               )}
             </div>
+
+            {/* Pay the credit in parts: a plan with due dates, and alerts when one is late. */}
+            {!editingBill && creditAmount > 0 && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px dashed var(--border)' }}>
+                <label className="row" style={{ gap: 9, cursor: 'pointer', alignItems: 'center' }}>
+                  <input type="checkbox" checked={installOn}
+                         onChange={(e) => setInstallOn(e.target.checked)}
+                         style={{ width: 17, height: 17, flexShrink: 0 }} />
+                  <span style={{ fontWeight: 600 }}>
+                    <CalendarClock size={14} style={{ verticalAlign: -2, marginRight: 5 }} />
+                    Pay the credit in instalments
+                  </span>
+                </label>
+                {installOn && (
+                  <>
+                    <div className="row wrap" style={{ gap: 8, marginTop: 9 }}>
+                      <div style={{ width: 96 }}>
+                        <label className="small muted">Instalments</label>
+                        <Input type="number" min="2" max="60" step="1" value={installCount}
+                               onChange={(e) => setInstallCount(e.target.value)} />
+                      </div>
+                      <div style={{ width: 150 }}>
+                        <label className="small muted">First due</label>
+                        <Input type="date" value={installFirst}
+                               onChange={(e) => setInstallFirst(e.target.value)} />
+                      </div>
+                      <div style={{ width: 130 }}>
+                        <label className="small muted">Every</label>
+                        <Select value={installEvery} onChange={(e) => setInstallEvery(e.target.value)}
+                                options={[{ value: 'weekly', label: 'Week' },
+                                          { value: 'fortnight', label: '15 days' },
+                                          { value: 'monthly', label: 'Month' }]} />
+                      </div>
+                    </div>
+                    {installPlan ? (
+                      <table className="tbl mt-1">
+                        <thead><tr><th>#</th><th>Due</th><th className="r">Amount</th></tr></thead>
+                        <tbody>
+                          {installPlan.parts.map((pt, n) => (
+                            <tr key={pt.due + n}>
+                              <td>{n + 1}</td><td className="nowrap">{fmtDate(pt.due)}</td>
+                              <td className="r">{money(pt.amount)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="small muted mt-1">Enter at least 2 instalments and the first due date.</div>
+                    )}
+                    <div className="small muted mt-1">
+                      You will get a dashboard alert when an instalment is due soon or late.
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </Card>
 
           <Button variant="primary" size="lg" block icon={Save} onClick={onSave} loading={busy}

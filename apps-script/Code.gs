@@ -33,11 +33,16 @@ var SCHEMA = {
   // reassign every value after it on every existing row.
   Bills: ['id', 'billNo', 'partyId', 'date', 'subtotal', 'roundOff', 'totalAmount',
           'status', 'dueDate', 'note', 'createdAt', 'voidReason', 'voidedAt',
-          'delivery', 'deliveredAt'],
+          'delivery', 'deliveredAt',
+          // installPlan appended: JSON text {base, parts:[{due, amount}]} when the credit
+          // is paid in instalments. Blank for an ordinary bill.
+          'installPlan'],
   // deliveredQty appended: how much of the line has gone out to the customer.
   // Blank on older rows, which then follow the bill's own delivery flag.
+  // supplierId appended: which supplier's stock this line was sold from. Blank
+  // means "any", and the oldest purchases are used first.
   BillItems: ['id', 'billId', 'itemId', 'qty', 'unit', 'price', 'costPriceAtSale', 'lineTotal',
-              'deliveredQty'],
+              'deliveredQty', 'supplierId'],
   // groupId appended: the parts of one account payment spread over several
   // bills share it, so the ledger can show them as one entry.
   Payments: ['id', 'billId', 'partyId', 'method', 'amount', 'date', 'note', 'reversed',
@@ -1784,6 +1789,9 @@ function saveBill(p) {
         dueDate: p.dueDate || '',
         note: p.note || ''
       };
+      // Left alone unless the caller sends one, so editing a bill's items
+      // does not wipe its instalment plan.
+      if (p.installPlan !== undefined) patch.installPlan = String(p.installPlan || '');
       updateRow('Bills', existing._row, patch);
 
       // What had already gone out, per item, so an edit does not forget it.
@@ -1817,7 +1825,8 @@ function saveBill(p) {
         // Most sales are handed over as the bill is written, so the biller marks
         // the exceptions as pending rather than confirming every ordinary sale.
         delivery: p.delivery === 'pending' ? 'pending' : 'delivered',
-        deliveredAt: p.delivery === 'pending' ? '' : nowISO()
+        deliveredAt: p.delivery === 'pending' ? '' : nowISO(),
+        installPlan: String(p.installPlan || '')
       };
       appendRow('Bills', bill);
       logActivity('bill', bill.id, 'create', 'Created Bill ' + bill.billNo);
@@ -1852,7 +1861,8 @@ function saveBill(p) {
         costPriceAtSale: r2(l.costPriceAtSale !== undefined && l.costPriceAtSale !== null
           ? l.costPriceAtSale : (item.costPrice || 0)),
         lineTotal: r2((Number(l.qty) || 0) * (Number(l.price) || 0)),
-        deliveredQty: r2(delivered)
+        deliveredQty: r2(delivered),
+        supplierId: String(l.supplierId || '')
       });
 
       // Remember this party's price for this item (source for FR-3 auto-fill)
