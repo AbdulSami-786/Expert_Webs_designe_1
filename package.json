@@ -11,7 +11,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "electron:dev": "concurrently -k \"vite --port 5199 --strictPort\" \"wait-on tcp:5199 && electron .\"",
-    "electron:build": "vite build && electron-builder --win zip"
+    "electron:build": "vite build && electron-builder --win"
   },
   "dependencies": {
     "jspdf": "^2.5.2",
@@ -44,8 +44,15 @@
       "package.json"
     ],
     "win": {
-      "target": "zip",
+      "target": ["nsis", "zip"],
       "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Expert Webs Designs"
     },
     "artifactName": "Expert-Webs-Designs-${version}-win.${ext}"
   }
