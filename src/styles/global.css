@@ -926,26 +926,112 @@ tr.age-30 { background: #FEF2F260; }
 /* ---- New Bill: item picker grid ---- */
 .item-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(206px, 1fr));
+  gap: 12px;
 }
 .item-tile {
+  position: relative;
+  display: flex; flex-direction: column; gap: 9px;
   text-align: left;
-  display: flex; flex-direction: column; gap: 3px;
-  padding: 9px 10px;
-  background: var(--surface, #fff);
+  padding: 13px 13px 12px;
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
   cursor: pointer;
   font: inherit; color: inherit;
-  transition: border-color .12s, box-shadow .12s;
+  overflow: hidden;
+  transition: transform var(--t), box-shadow var(--t), border-color var(--t), background var(--t);
 }
-.item-tile:hover { border-color: var(--primary, #D9390B); box-shadow: 0 1px 6px rgba(0,0,0,.08); }
-.item-tile:focus-visible { outline: 2px solid var(--primary, #D9390B); outline-offset: 1px; }
-.item-tile.out { opacity: .6; }
-.item-tile .nm { font-weight: 600; font-size: 13px; line-height: 1.25; overflow-wrap: anywhere; }
-.item-tile .pr { font-weight: 700; font-size: 14px; }
-.item-tile .sup { font-size: 11.5px; color: var(--text-muted, #6B7280); line-height: 1.3; }
-.item-tile .oth { font-size: 11.5px; color: var(--text-muted, #6B7280); display: flex; gap: 6px; flex-wrap: wrap; }
-.item-tile .oth .bad { color: var(--danger); font-weight: 600; }
-.item-tile .in-bill { font-size: 11px; font-weight: 700; color: var(--success); }
+/* a thin accent bar that grows in on hover */
+.item-tile::before {
+  content: ''; position: absolute; left: 0; top: 0; right: 0; height: 3px;
+  background: var(--brand-gradient); opacity: 0; transition: opacity var(--t);
+}
+.item-tile:hover {
+  transform: translateY(-2px);
+  border-color: #F1B8A5;
+  box-shadow: 0 8px 20px rgba(16, 24, 40, .10);
+}
+.item-tile:hover::before, .item-tile.on::before { opacity: 1; }
+.item-tile:active { transform: translateY(0) scale(.985); }
+.item-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.item-tile.on { border-color: var(--accent); background: #FFF8F5; box-shadow: 0 0 0 1px var(--accent) inset, var(--shadow-sm); }
+.item-tile.out { background: #FAFAFB; }
+.item-tile.out .av, .item-tile.out .nm, .item-tile.out .pr { opacity: .55; }
+
+.item-tile .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.item-tile .av {
+  width: 38px; height: 38px; flex: none; border-radius: 10px;
+  display: grid; place-items: center;
+  font-weight: 800; font-size: 14px; letter-spacing: .02em;
+}
+.item-tile .stk {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 700; line-height: 1;
+  padding: 5px 8px; border-radius: 999px; white-space: nowrap;
+}
+.item-tile .stk::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.item-tile .stk.ok  { background: var(--success-bg); color: #15803D; }
+.item-tile .stk.low { background: var(--warning-bg); color: #B45309; }
+.item-tile .stk.out { background: var(--danger-bg);  color: #B91C1C; }
+
+.item-tile .nm {
+  font-weight: 650; font-size: 13.5px; line-height: 1.3; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  min-height: 2.6em; overflow-wrap: anywhere;
+}
+.item-tile .pr { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.item-tile .pr b { font-size: 18px; font-weight: 800; letter-spacing: -.01em; color: var(--text); }
+.item-tile .pr small { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+.item-tile .pr .tag {
+  font-size: 10.5px; font-weight: 700; color: var(--accent);
+  background: #FDECE6; padding: 2px 6px; border-radius: 999px;
+}
+.item-tile .pr .cost { font-size: 12.5px; color: var(--text-muted); font-weight: 600; }
+
+.item-tile .chips { display: flex; flex-wrap: wrap; gap: 5px; min-height: 22px; }
+.item-tile .chip-s {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  font-size: 11px; font-weight: 600; color: #374151;
+  background: var(--neutral-bg); border: 1px solid var(--border);
+  padding: 2px 7px; border-radius: 999px;
+}
+.item-tile .chip-s span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
+.item-tile .chip-s em { font-style: normal; color: var(--accent); font-weight: 800; }
+.item-tile .chip-s.more { color: var(--text-muted); }
+.item-tile .none { font-size: 11.5px; color: var(--text-muted); font-style: italic; }
+
+.item-tile .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
+.item-tile .cat {
+  font-size: 11px; font-weight: 600; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.item-tile .add {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--primary); color: #fff;
+  transition: background var(--t), transform var(--t);
+}
+.item-tile:hover .add { background: var(--accent); transform: scale(1.08); }
+.item-tile.on .add { background: var(--accent); }
+
+/* "× 2" corner badge when the item is already on this bill */
+.item-tile .inbill {
+  position: absolute; top: 9px; right: 9px; z-index: 1;
+  background: var(--accent); color: #fff; font-size: 11px; font-weight: 800;
+  padding: 3px 8px; border-radius: 999px; box-shadow: 0 2px 6px rgba(217, 57, 11, .35);
+}
+.item-tile.on .top .stk { margin-right: 46px; }   /* leave room for the badge */
+
+@media (max-width: 640px) {
+  .item-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .item-tile { padding: 11px 10px; gap: 8px; border-radius: 11px; }
+  .item-tile .av { width: 32px; height: 32px; font-size: 12.5px; }
+  .item-tile .pr b { font-size: 16px; }
+  .item-tile .stk { font-size: 10.5px; padding: 4px 7px; }
+  .item-tile.on .top .stk { margin-right: 0; }
+  .item-tile .inbill { top: auto; bottom: 8px; right: 8px; }
+  .item-tile.on .add { display: none; }
+}

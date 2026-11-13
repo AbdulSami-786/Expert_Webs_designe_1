@@ -1826,6 +1826,67 @@ async function perform(action, payload = {}) {
       return { applied, amount };
     }
 
+    /* Move standalone purchase rows (the Purchases page, supplier typed as text) into
+       the Suppliers module. The SAME rows keep counting toward stock, so stock does not
+       change; they are gathered into one purchase bill for the supplier, optionally with
+       extra lines. The bill is recorded as paid, under the method 'Old Data' by default,
+       so no cash or bank balance moves. */
+    case 'adoptPurchases': {
+      const p = payload;
+      const supplier = d.suppliers.find((x) => x.id === p.supplierId);
+      if (!supplier) throw new Error('Select a supplier');
+      const ids = new Set(p.purchaseIds || []);
+      const adopt = d.purchases.filter((x) => ids.has(x.id) && !x.purchaseBillId);
+      const extra = p.newLines || [];
+      if (!adopt.length && !extra.length) throw new Error('Nothing to move');
+      extra.forEach((l, i) => {
+        if (!d.items.some((it) => it.id === l.itemId)) throw new Error(`Line ${i + 1}: item not found`);
+        if (!(Number(l.qty) > 0)) throw new Error(`Line ${i + 1}: quantity must be greater than zero`);
+        if (!(Number(l.costPrice) >= 0)) throw new Error(`Line ${i + 1}: price must be zero or more`);
+      });
+
+      const date = p.date || adopt.map((x) => String(x.date).slice(0, 10)).filter(Boolean).sort()[0] || todayISO();
+      const total = r2(
+        adopt.reduce((s, x) => s + (Number(x.qty) || 0) * (Number(x.costPrice) || 0), 0)
+        + extra.reduce((s, l) => s + Number(l.qty) * Number(l.costPrice), 0));
+      const bill = {
+        id: uid('pbl'), purchaseNo: nextPurchaseNo(d.purchaseBills, date),
+        supplierId: supplier.id, invoiceNo: '', date, totalAmount: total, note: p.note || '',
+        status: 'active', createdAt: new Date().toISOString(), voidReason: '', voidedAt: '',
+      };
+      d.purchaseBills.push(bill);
+      touch(d, bill.id);
+
+      adopt.forEach((x) => {
+        x.supplierId = supplier.id; x.purchaseBillId = bill.id;
+        x.supplierName = supplier.name; x.method = '';
+        touch(d, x.id);
+      });
+      extra.forEach((l) => {
+        const rec = {
+          id: uid('pur'), itemId: l.itemId, supplierName: supplier.name,
+          qty: Number(l.qty), costPrice: r2(l.costPrice), date, note: '', method: '',
+          supplierId: supplier.id, purchaseBillId: bill.id, receivedQty: r2(l.qty),
+        };
+        d.purchases.push(rec);
+        touch(d, rec.id);
+      });
+      if (total > 0) {
+        const pay = {
+          id: uid('spy'), supplierId: supplier.id, purchaseBillId: bill.id,
+          method: p.method || 'Old Data', amount: total, date,
+          note: p.payNote || 'Paid - recorded before the Suppliers module', isAdvance: false,
+        };
+        d.supplierPayments.push(pay);
+        touch(d, pay.id);
+      }
+      logActivity(d, 'purchaseBill', bill.id, 'create',
+        `Purchase ${bill.purchaseNo} from ${supplier.name} - ${total} (${adopt.length} existing purchase `
+        + `row${adopt.length === 1 ? '' : 's'} moved in, ${extra.length} added)`);
+      save();
+      return bill;
+    }
+
     case 'savePurchaseBill': {
       const p = payload;
       const supplier = d.suppliers.find((x) => x.id === p.supplierId);

@@ -318,6 +318,8 @@ export const api = {
   saveSupplier:          (s)          => call('saveSupplier', s),
   archiveSupplier:       (id)         => call('archiveSupplier', { id }),
   savePurchaseBill:      (b)          => call('savePurchaseBill', b),
+  // Move standalone Purchases-page rows into a supplier's purchase bill (stock unchanged).
+  adoptPurchases:        (b)          => call('adoptPurchases', b),
   voidPurchaseBill:      (id, reason) => call('voidPurchaseBill', { id, reason }),
   // Per line: [{ id, receivedQty }] — how much of each item has arrived.
   setPurchaseReceipt:    (purchaseBillId, lines) => call('setPurchaseReceipt', { purchaseBillId, lines }),

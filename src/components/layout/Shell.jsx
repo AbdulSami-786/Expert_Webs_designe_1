@@ -12,7 +12,7 @@ import {
   RotateCcw, Receipt, Wallet, Landmark, BookOpen, Scale, TrendingUp,
   ClipboardList, UserCog, CreditCard, Boxes, ShoppingCart, Building2,
   Settings as SettingsIcon, LogOut, Download, CalendarCheck, Plus,
-  MoreHorizontal, WifiOff, RefreshCw, ScrollText, Truck, ShieldCheck, Lock,
+  MoreHorizontal, WifiOff, RefreshCw, ScrollText, Truck, ShieldCheck, Lock, PackageX,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Toasts, Button, Skeleton, Empty } from '../ui';
@@ -54,6 +54,7 @@ const NAV = [
     label: 'Stock & Team',
     items: [
       { to: '/items',      icon: Package,      label: 'Items' },
+      { to: '/sold-out',   icon: PackageX,     label: 'Sold Out' },
       { to: '/purchases',  icon: ShoppingCart, label: 'Purchases' },
       { to: '/stock-loss', icon: Boxes,        label: 'Damaged Stock' },
       { to: '/employees',  icon: UserCog,      label: 'Employees' },

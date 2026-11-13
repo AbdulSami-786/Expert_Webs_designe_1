@@ -170,7 +170,7 @@ var REPLAY_GUARDED = {
   saveBill: 1, addPayment: 1, addReturn: 1, addAdvance: 1, savePurchase: 1,
   addEmployeeTx: 1, saveExpense: 1, saveStockLoss: 1, saveAsset: 1,
   saveCheque: 1, settleParty: 1,
-  savePurchaseBill: 1, addSupplierPayment: 1, addSupplierReturn: 1, saveSupplier: 1,
+  savePurchaseBill: 1, adoptPurchases: 1, addSupplierPayment: 1, addSupplierReturn: 1, saveSupplier: 1,
   setOffParty: 1
 };
 
@@ -325,6 +325,7 @@ function route(action, p, token) {
     case 'saveSupplier':          return saveSupplier(p);
     case 'archiveSupplier':       return toggleArchive('Suppliers', p.id, 'supplier');
     case 'savePurchaseBill':      return savePurchaseBill(p);
+    case 'adoptPurchases':        return adoptPurchases(p);
     case 'voidPurchaseBill':      return voidPurchaseBill(p);
     case 'setPurchaseReceipt':    return setPurchaseReceipt(p);
     case 'addSupplierPayment':    return addSupplierPayment(p);
@@ -3348,6 +3349,94 @@ function savePurchaseBill(p) {
     logActivity('purchaseBill', bill.id, 'create',
       'Purchase ' + bill.purchaseNo + ' from ' + supplier.name + ' — ' + total +
       (paidNow > 0 ? ', paid ' + paidNow + ' (' + (p.method || 'Cash') + ')' : ''));
+    return bill;
+  });
+}
+
+/**
+ * Move standalone purchase rows (the Purchases page, supplier typed as text) into the
+ * Suppliers module. Mirrors the 'adoptPurchases' case in src/lib/localAdapter.js.
+ *
+ * The SAME rows keep counting toward stock, so stock does not change; they are gathered
+ * into one purchase bill, optionally with extra lines, and recorded as paid (method
+ * 'Old Data' by default, so no cash or bank balance moves). The Purchases tab is read
+ * once and the changed columns written back once, so a few hundred rows is one request.
+ */
+function adoptPurchases(p) {
+  return withLock(function () {
+    var supplier = getById('Suppliers', p.supplierId);
+    if (!supplier) fail('Select a supplier');
+    var want = {};
+    (p.purchaseIds || []).forEach(function (id) { want[String(id)] = 1; });
+    var extra = p.newLines || [];
+
+    var itemById = {};
+    readAll('Items').forEach(function (it) { itemById[it.id] = it; });
+    extra.forEach(function (l, i) {
+      if (!itemById[l.itemId]) fail('Line ' + (i + 1) + ': item not found');
+      if (!(Number(l.qty) > 0)) fail('Line ' + (i + 1) + ': quantity must be greater than zero');
+      if (!(Number(l.costPrice) >= 0)) fail('Line ' + (i + 1) + ': price must be zero or more');
+    });
+
+    var s = sheet('Purchases');
+    var last = s.getLastRow();
+    var cols = SCHEMA.Purchases;
+    var ci = {};
+    cols.forEach(function (k, i) { ci[k] = i; });
+    var range = last >= 2 ? s.getRange(2, 1, last - 1, cols.length) : null;
+    var vals = range ? range.getValues() : [];
+
+    var hit = [];
+    for (var i = 0; i < vals.length; i++) {
+      if (want[String(vals[i][ci.id])] && !vals[i][ci.purchaseBillId]) hit.push(i);
+    }
+    if (!hit.length && !extra.length) fail('Nothing to move');
+
+    var total = 0;
+    var days = [];
+    hit.forEach(function (i) {
+      total += (Number(vals[i][ci.qty]) || 0) * (Number(vals[i][ci.costPrice]) || 0);
+      var dd = dayOf(vals[i][ci.date]);
+      if (dd) days.push(dd);
+    });
+    extra.forEach(function (l) { total += Number(l.qty) * Number(l.costPrice); });
+    total = r2(total);
+    days.sort();
+    var date = p.date || days[0] || todayISO();
+
+    var bill = {
+      id: uid('pbl'), purchaseNo: nextPurchaseNo(date), supplierId: supplier.id,
+      invoiceNo: '', date: date, totalAmount: total, note: p.note || '',
+      status: 'active', createdAt: nowISO(), voidReason: '', voidedAt: ''
+    };
+    appendRow('PurchaseBills', bill);
+
+    hit.forEach(function (i) {
+      vals[i][ci.supplierId] = supplier.id;
+      vals[i][ci.purchaseBillId] = bill.id;
+      vals[i][ci.supplierName] = supplier.name;
+      vals[i][ci.method] = '';
+    });
+    if (hit.length) range.setValues(vals);
+
+    extra.forEach(function (l) {
+      appendRow('Purchases', {
+        id: uid('pur'), itemId: l.itemId, supplierName: supplier.name,
+        qty: Number(l.qty), costPrice: r2(l.costPrice), date: date, note: '', method: '',
+        supplierId: supplier.id, purchaseBillId: bill.id, receivedQty: r2(l.qty)
+      });
+    });
+
+    if (total > 0) {
+      appendRow('SupplierPayments', {
+        id: uid('spy'), supplierId: supplier.id, purchaseBillId: bill.id,
+        method: p.method || 'Old Data', amount: total, date: date,
+        note: p.payNote || 'Paid - recorded before the Suppliers module', isAdvance: false
+      });
+    }
+    logActivity('purchaseBill', bill.id, 'create',
+      'Purchase ' + bill.purchaseNo + ' from ' + supplier.name + ' - ' + total +
+      ' (' + hit.length + ' existing purchase rows moved in, ' + extra.length + ' added)');
     return bill;
   });
 }

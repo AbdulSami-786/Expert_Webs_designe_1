@@ -1,19 +1,21 @@
 // Items (FR-2 / Plan 3.3) — units, conversion, cost price, stock, low-stock alerts.
 
 import { useMemo, useState } from 'react';
-import { Plus, Package, Pencil, Archive, ArchiveRestore, AlertTriangle, Download } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, Package, PackageX, Pencil, Archive, ArchiveRestore, AlertTriangle, Download } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
 import {
   Card, Button, Modal, Empty, PageHead, SearchBar, Money, Pill, Confirm, Select,
 } from '../components/ui';
 import ItemForm from '../components/forms/ItemForm';
-import { itemStock, itemReceived } from '../lib/calc';
+import { itemStock, itemReceived, itemListTotals } from '../lib/calc';
 import { money, norm, fmtDate, r2 } from '../lib/format';
 import { exportExcel } from '../lib/exporters';
 
 export default function Items() {
   const { data, settings, mutate, toast } = useApp();
+  const nav = useNavigate();
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('all');
   const [showArchived, setShowArchived] = useState(false);
@@ -45,13 +47,15 @@ export default function Items() {
       .sort((a, b) => (b.low ? 1 : 0) - (a.low ? 1 : 0) || a.name.localeCompare(b.name));
   }, [data, q, category, showArchived]);
 
-  const totalValue = useMemo(() => r2(rows.reduce((s, r) => s + r.value, 0)), [rows]);
 
-  // Items with no stock are shown in their own section, separate from available ones.
-  const available = useMemo(() => rows.filter((r) => Number(r.stock) > 0), [rows]);
-  const outOfStock = useMemo(() => rows.filter((r) => !(Number(r.stock) > 0)), [rows]);
+  // Items with no stock live on their own page (Sold Out). This page lists what
+  // is in stock; the archived view still lists every archived item.
+  const available = useMemo(
+    () => (showArchived ? rows : rows.filter((r) => Number(r.stock) > 0)), [rows, showArchived]);
   const availableValue = useMemo(() => r2(available.reduce((s, r) => s + r.value, 0)), [available]);
-  const outOfStockValue = useMemo(() => r2(outOfStock.reduce((s, r) => s + r.value, 0)), [outOfStock]);
+  const soldOutCount = useMemo(
+    () => data.items.filter((i) => i.status !== 'archived' && !(itemStock(i.id, data) > 0)).length,
+    [data]);
 
   const doArchive = async () => {
     const it = confirmArchive;
@@ -63,13 +67,15 @@ export default function Items() {
   const onExcel = () => {
     exportExcel('Items',
       ['Item', 'Category', 'Base Unit', 'Alt Unit', 'Conversion', 'Cost Price', 'Total Received', 'Available', 'Low Alert', 'Stock Value'],
-      rows.map((i) => [i.name, i.category, i.baseUnit, i.altUnit || '', i.conversionRate || '',
+      available.map((i) => [i.name, i.category, i.baseUnit, i.altUnit || '', i.conversionRate || '',
                        Number(i.costPrice).toFixed(2), i.received, i.stock, i.lowStockAlert, i.value.toFixed(2)]),
-      [`${settings.shopName} — Items`, `Total stock value: ${money(totalValue)}`]);
+      [`${settings.shopName} — Items`, `Total stock value: ${money(availableValue)}`]);
     toast('Items exported');
   };
 
-  const renderSection = (title, list, listValue, tone) => (
+  const renderSection = (title, list, listValue, tone) => {
+    const tot = itemListTotals(list);
+    return (
     <div key={title}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px',
@@ -143,7 +149,14 @@ export default function Items() {
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={7}>{list.length} items</td>
+                    <td colSpan={3}>{list.length} items</td>
+                    <td className="r">
+                      {money(tot.bought)}
+                      <div className="small muted" style={{ fontWeight: 400 }}>total bought</div>
+                    </td>
+                    <td className="r num">{tot.received} {tot.unit}</td>
+                    <td className="r num">{tot.stock} {tot.unit}</td>
+                    <td></td>
                     <td className="r">{money(listValue)}</td>
                     <td></td>
                   </tr>
@@ -172,12 +185,13 @@ export default function Items() {
         </>
       )}
     </div>
-  );
+    );
+  };
 
   return (
     <>
       <PageHead title="Items"
-                subtitle={`${available.length} available · ${outOfStock.length} out of stock · ${money(totalValue)} stock value at cost`}>
+                subtitle={`${available.length} ${showArchived ? 'archived' : 'in stock'} · ${money(availableValue)} stock value at cost`}>
         <SearchBar value={q} onChange={setQ} placeholder="Search items…" />
         <Select value={category} onChange={(e) => setCategory(e.target.value)} style={{ width: 150 }}>
           <option value="all">All categories</option>
@@ -186,19 +200,22 @@ export default function Items() {
         <Button onClick={() => setShowArchived((s) => !s)}>
           {showArchived ? 'Show active' : 'Show archived'}
         </Button>
+        <Button icon={PackageX} onClick={() => nav('/sold-out')}
+                title="Items with no stock left">
+          Sold Out ({soldOutCount})
+        </Button>
         <Button icon={Download} onClick={onExcel}>Excel</Button>
         <Button variant="primary" icon={Plus} onClick={() => setAdding(true)}>Add Item</Button>
       </PageHead>
 
       <Card tight>
-        {!rows.length ? (
-          <Empty icon={Package} title={q ? 'No matching items' : 'No items yet'}
-                 message={q ? `Nothing matches "${q}".` : 'Add items to start building bills.'}
+        {!available.length ? (
+          <Empty icon={Package} title={q ? 'No matching items' : (soldOutCount && !showArchived ? 'Nothing in stock' : 'No items yet')}
+                 message={q ? `Nothing matches "${q}".` : (soldOutCount && !showArchived ? `All ${soldOutCount} items are sold out — see the Sold Out page.` : 'Add items to start building bills.')}
                  action={!q ? <Button variant="primary" icon={Plus} onClick={() => setAdding(true)}>Add your first item</Button> : null} />
         ) : (
           <>
-            {renderSection('Available', available, availableValue)}
-            {outOfStock.length > 0 && renderSection('Out of stock', outOfStock, outOfStockValue, 'danger')}
+            {renderSection(showArchived ? 'Archived' : 'In stock', available, availableValue)}
           </>
         )}
       </Card>

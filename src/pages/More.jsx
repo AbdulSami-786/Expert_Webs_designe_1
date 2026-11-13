@@ -7,7 +7,7 @@ import {
   Receipt, RotateCcw, Package, ShoppingCart, Boxes, UserCog, Wallet,
   Building2, CreditCard, Landmark, BookOpen, Scale, TrendingUp, ClipboardList,
   ScrollText, Settings as SettingsIcon, LogOut, Download, CalendarCheck,
-  ChevronRight, BookUser, Truck, ShieldCheck,
+  ChevronRight, BookUser, Truck, ShieldCheck, PackageX,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { canAccessPath } from '../lib/access';
@@ -43,6 +43,7 @@ const GROUPS = [
     label: 'Stock & Team',
     items: [
       { to: '/items',      icon: Package,      label: 'Items',         desc: 'Products and stock' },
+      { to: '/sold-out',   icon: PackageX,     label: 'Sold Out',      desc: 'Items with no stock' },
       { to: '/purchases',  icon: ShoppingCart, label: 'Purchases',     desc: 'Stock from suppliers' },
       { to: '/stock-loss', icon: Boxes,        label: 'Damaged Stock', desc: 'Damaged or expired' },
       { to: '/employees',  icon: UserCog,      label: 'Employees',     desc: 'Salaries and advances' },

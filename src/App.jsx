@@ -12,6 +12,7 @@ import Parties      from './pages/Parties';
 import PartyLedger  from './pages/PartyLedger';
 import Outstanding  from './pages/Outstanding';
 import Items        from './pages/Items';
+import SoldOut      from './pages/SoldOut';
 import Returns      from './pages/Returns';
 import Cheques      from './pages/Cheques';
 import Employees    from './pages/Employees';
@@ -63,6 +64,7 @@ function Router() {
         <Route path="party/:id"         element={<PartyLedger />} />
         <Route path="outstanding"       element={<Outstanding />} />
         <Route path="items"             element={<Items />} />
+        <Route path="sold-out"          element={<SoldOut />} />
         <Route path="returns"           element={<Returns />} />
         <Route path="cheques"           element={<Cheques />} />
         <Route path="employees"         element={<Employees />} />

@@ -528,6 +528,22 @@ export function itemStock(itemId, {
 }
 
 /**
+ * Column totals for an item list. Each row needs { received, stock, costPrice }.
+ * `bought` is what all the received stock cost (received x cost price) — the sum of
+ * unit prices would mean nothing. `unit` is set only when every row shares one unit,
+ * since pieces and kilos cannot be added into one figure with a label.
+ */
+export function itemListTotals(rows = []) {
+  const units = new Set(rows.map((r) => r.baseUnit).filter(Boolean));
+  return {
+    received: r2(rows.reduce((s, r) => s + (Number(r.received) || 0), 0)),
+    stock: r2(rows.reduce((s, r) => s + (Number(r.stock) || 0), 0)),
+    bought: r2(rows.reduce((s, r) => s + (Number(r.received) || 0) * (Number(r.costPrice) || 0), 0)),
+    unit: units.size === 1 ? [...units][0] : '',
+  };
+}
+
+/**
  * Total stock that has come in for an item to date: opening stock plus every
  * purchase (cancelled purchase bills excluded). Base-unit quantity.
  */

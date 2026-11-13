@@ -97,6 +97,7 @@ const ROUTE_RULES = [
   [/^\/expenses(\/|$)/,       'expenses'],
   [/^\/assets(\/|$)/,         'assets'],
   [/^\/items(\/|$)/,          'items'],
+  [/^\/sold-out(\/|$)/,       'items'],   // same permission as Items
   [/^\/purchases?(\/|$)/,     'purchases'],
   [/^\/stock-loss(\/|$)/,     'stock-loss'],
   [/^\/employees?(\/|$)/,     'employees'],

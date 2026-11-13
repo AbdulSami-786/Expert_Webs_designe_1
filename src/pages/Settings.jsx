@@ -15,7 +15,7 @@ import {
 import { ROUNDING_RULES, money, applyRounding } from '../lib/format';
 import { downloadBackup, printReceiptTest, receiptWidthMm, RECEIPT_WIDTHS } from '../lib/exporters';
 import SyncPanel from '../components/SyncPanel';
-import { importOldData, previewOldData, parseOldData } from '../lib/importOldData';
+import { importOldData, planOldData, parseOldData } from '../lib/importOldData';
 import { CONFIG, DEFAULT_METHODS } from '../lib/config';
 
 export default function Settings() {
@@ -32,7 +32,9 @@ export default function Settings() {
   const [importing, setImporting] = useState('');   // progress text while the old-data import runs
   // The chosen oldData.json (kept on this computer, never bundled with the app).
   const [oldData, setOldData] = useState(null);
-  const oldPreview = useMemo(() => (oldData ? previewOldData(oldData) : null), [oldData]);
+  // What the import would do with the data as it is now (nothing is written yet).
+  const oldPlan = useMemo(() => (oldData ? planOldData({ data, oldData }) : null), [oldData, data]);
+  const oldPreview = oldPlan?.summary || null;
 
   const chooseOldFile = async (e) => {
     const file = e.target.files?.[0];
@@ -62,8 +64,8 @@ export default function Settings() {
     try {
       const res = await importOldData({ api, data, settings, oldData, onStep: setImporting });
       await refresh();
-      toast(`Old data imported: ${res.suppliers} new suppliers, ${res.items} items, `
-        + `${res.purchases} purchases, ${res.payments} payments, ${res.sales} old-sales bills`
+      toast(`Old data imported: ${res.suppliers} new suppliers, ${res.moved} existing purchase rows moved in, `
+        + `${res.items} new items, ${res.purchases} purchase bills, ${res.payments} payments, ${res.sales} old-sales bills`
         + (res.skipped.length ? `. Already imported, skipped: ${res.skipped.join(', ')}` : ''), 'success');
     } catch (err) {
       await refresh().catch(() => {});
@@ -291,15 +293,38 @@ export default function Settings() {
             </p>
             <input type="file" accept=".json,application/json" onChange={chooseOldFile}
                    disabled={Boolean(importing)} style={{ marginBottom: 10 }} />
-            {oldPreview && (
+            {oldPlan && (
               <>
-                <p className="small muted">
-                  Adds {oldPreview.suppliers} suppliers, {oldPreview.items} items and {oldPreview.lines} purchase lines
-                  ({money(oldPreview.bought)} bought), {oldPreview.payments} supplier payments
-                  ({money(oldPreview.paid)} paid) and what was already sold ({money(oldPreview.revenue)}, as
-                  &ldquo;Old Data Sales&rdquo; bills dated {oldPreview.asOf}). Cash and bank balances are not touched.
-                  Running it twice does not duplicate anything.
-                </p>
+                <div className="small" style={{ marginBottom: 10, lineHeight: 1.55 }}>
+                  <strong>{oldPreview.suppliers}</strong> suppliers
+                  {oldPreview.newSuppliers ? ` (${oldPreview.newSuppliers} new)` : ''}. Their purchase bills will hold:
+                  <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                    <li><strong>{oldPreview.moved}</strong> purchase rows already on your Purchases page, moved in as they
+                      are — stock does not change</li>
+                    {oldPreview.added > 0 && (
+                      <li><strong>{oldPreview.added}</strong> extra lines the sheet says were bought
+                        ({money(oldPreview.addedValue)})</li>
+                    )}
+                    {oldPreview.newItems > 0 && <li><strong>{oldPreview.newItems}</strong> items not in the app yet, created</li>}
+                    <li><strong>{oldPreview.sales}</strong> sold lines ({money(oldPreview.soldValue)}), added as
+                      &ldquo;Old Data Sales&rdquo; bills dated {oldPreview.asOf}, each from its supplier&rsquo;s stock</li>
+                    {oldPreview.payments > 0 && (
+                      <li><strong>{oldPreview.payments}</strong> supplier payments from the sheet ({money(oldPreview.paid)})</li>
+                    )}
+                  </ul>
+                </div>
+                <div className="small muted" style={{ marginBottom: 10 }}>
+                  Cash and bank balances are not touched. Running it twice does not duplicate anything.
+                </div>
+                {oldPlan.warnings.length > 0 && (
+                  <div style={{
+                    padding: '9px 11px', marginBottom: 10, background: 'var(--warning-bg)',
+                    border: '1px solid #FDE68A', borderRadius: 'var(--r-sm)', fontSize: 12.5, color: '#B45309',
+                  }}>
+                    {oldPlan.warnings.slice(0, 4).map((w) => <div key={w}>• {w}</div>)}
+                    {oldPlan.warnings.length > 4 && <div>• and {oldPlan.warnings.length - 4} more</div>}
+                  </div>
+                )}
                 <Button icon={Upload} block loading={Boolean(importing)} onClick={() => setConfirmImport(true)}>
                   {importing || 'Import Old Data'}
                 </Button>
@@ -386,7 +411,7 @@ export default function Settings() {
       <Confirm
         open={confirmImport}
         title="Import old Excel data?"
-        message={`This adds ${oldPreview?.suppliers ?? 0} suppliers, ${oldPreview?.items ?? 0} items, their purchases, payments and sales to your records. Download a backup first if you want a restore point.`}
+        message={`This moves ${oldPreview?.moved ?? 0} existing purchase rows into ${oldPreview?.suppliers ?? 0} suppliers and adds the sold quantities. Download a backup first if you want a restore point.`}
         confirmLabel="Import"
         onConfirm={runImport}
         onCancel={() => setConfirmImport(false)}

@@ -745,28 +745,50 @@ export default function NewBill() {
                     const price = pp?.price ?? latestSale.get(i.id)?.price;
                     const inBill = lines.filter((l) => l.itemId === i.id)
                       .reduce((t, l) => t + (Number(l.qty) || 0), 0);
+                    const low = Number(i.lowStockAlert) > 0 && stockQty > 0 && stockQty <= Number(i.lowStockAlert);
+                    const hue = tileHue(i.category || i.name);
                     return (
                       <button key={i.id} type="button" onClick={() => addFromTile(i.id)}
-                              className={`item-tile ${stockQty > 0 ? '' : 'out'}`}
+                              className={`item-tile ${inBill > 0 ? 'on' : ''} ${stockQty > 0 ? '' : 'out'}`}
                               title={`Add ${i.name}`}>
+                        {inBill > 0 && <span className="inbill">× {inBill}</span>}
+
+                        <span className="top">
+                          <span className="av"
+                                style={{ background: `hsl(${hue} 80% 93%)`, color: `hsl(${hue} 55% 30%)` }}>
+                            {tileInitials(i.name)}
+                          </span>
+                          <span className={`stk ${stockQty <= 0 ? 'out' : low ? 'low' : 'ok'}`}>
+                            {stockQty <= 0 ? 'Sold out' : `${stockQty} ${low ? 'left' : i.baseUnit}`}
+                          </span>
+                        </span>
+
                         <span className="nm">{i.name}</span>
+
                         <span className="pr">
-                          {price ? money(price) : <span className="muted small" style={{ fontWeight: 500 }}>Cost {money(i.costPrice)}</span>}
-                          {pp && <span className="muted small" style={{ fontWeight: 500 }}> · {party?.name?.split(' ')[0]}'s rate</span>}
+                          {price
+                            ? <><b>{money(price)}</b><small>/ {i.baseUnit}</small></>
+                            : <span className="cost">Cost {money(i.costPrice)}</span>}
+                          {pp && <span className="tag">{party?.name?.split(' ')[0]}&rsquo;s rate</span>}
                         </span>
-                        <span className="sup">
-                          {sups.length
-                            ? sups.slice(0, 3).map((x) => `${x.name} (${x.available})`).join(' · ')
-                              + (sups.length > 3 ? ` +${sups.length - 3}` : '')
-                            : 'No supplier stock'}
+
+                        <span className="chips">
+                          {sups.length ? (
+                            <>
+                              {sups.slice(0, 2).map((x) => (
+                                <span key={x.supplierId} className="chip-s" title={`${x.name}: ${x.available} left`}>
+                                  <span>{x.name}</span><em>{x.available}</em>
+                                </span>
+                              ))}
+                              {sups.length > 2 && <span className="chip-s more">+{sups.length - 2}</span>}
+                            </>
+                          ) : <span className="none">No supplier stock</span>}
                         </span>
-                        <span className="oth">
-                          {stockQty > 0
-                            ? <span>Stock {stockQty} {i.baseUnit}</span>
-                            : <span className="bad">Out of stock</span>}
-                          {i.category && <span>{i.category}</span>}
+
+                        <span className="foot">
+                          <span className="cat">{i.category || 'Uncategorised'}</span>
+                          <span className="add" aria-hidden="true"><Plus size={16} strokeWidth={2.6} /></span>
                         </span>
-                        {inBill > 0 && <span className="in-bill">In bill × {inBill}</span>}
                       </button>
                     );
                   })}
@@ -1343,6 +1365,24 @@ function saveDrafts(tabs, active) {
       localStorage.setItem(DRAFTS_KEY, JSON.stringify({ tabs, active }));
     }
   } catch { /* storage full or blocked: drafts are a convenience only */ }
+}
+
+
+/* ---------------- Item tile helpers ---------------- */
+
+/** Two capital letters for a tile's avatar: "Samsung A17" -> "SA". */
+function tileInitials(name) {
+  const words = String(name || '').trim().split(/[^A-Za-z0-9]+/).filter(Boolean);
+  if (!words.length) return '?';
+  return (words.length > 1 ? words[0][0] + words[1][0] : words[0].slice(0, 2)).toUpperCase();
+}
+
+/** A stable hue (0-359) from text, so every category keeps its own colour. */
+function tileHue(text) {
+  let h = 0;
+  const t = String(text || '');
+  for (let k = 0; k < t.length; k++) h = (h * 31 + t.charCodeAt(k)) % 360;
+  return h;
 }
 
 /* ---------------- small helpers ---------------- */
