@@ -157,8 +157,8 @@ var BOOLEAN = { reversed: 1, restock: 1, active: 1, isAdvance: 1 };
  * missing, the link is still serving an old deployment (saving Code.gs is not enough: it needs
  * Deploy > Manage deployments > pencil > Version: New version > Deploy).
  */
-var BACKEND_VERSION = '1.4.0';
-var BACKEND_FEATURES = ['adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan'];
+var BACKEND_VERSION = '1.5.0';
+var BACKEND_FEATURES = ['adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty'];
 
 function doGet(e) {
   return json({
@@ -223,6 +223,12 @@ function doPost(e) {
         }
       }
     }
+
+    // Instant saving: the dashboard has already shown this record, under ids it made itself, and
+    // sends them along so the Sheet stores the SAME ids (see uid()). Taken out of the payload
+    // here so no action ever sees it.
+    setIdHints(payload._ids);
+    delete payload._ids;
 
     var data = route(action, payload, body.token);
     var out = JSON.stringify({ ok: true, data: data });
@@ -312,6 +318,7 @@ function route(action, p, token) {
 
     case 'saveParty':        return saveParty(p);
     case 'archiveParty':     return toggleArchive('Parties', p.id, 'party');
+    case 'deleteParty':      return deleteParty(p);
     case 'setPartyLock':     return setPartyLock(p);
 
     case 'saveItem':         return saveItem(p);
@@ -397,7 +404,19 @@ function ss() {
  * data and read back blank in the new column, which is what a migration should
  * do.
  */
+// A tab is looked up and checked for missing columns once per request, not on every read and
+// write: each of those is a separate (slow) call to Google, and one action touches the same tab
+// many times. A request is one execution, so this never outlives the check it saves.
+var SHEET_MEMO = {};
+
 function sheet(name) {
+  if (SHEET_MEMO[name]) return SHEET_MEMO[name];
+  var s = checkedSheet(name);
+  SHEET_MEMO[name] = s;
+  return s;
+}
+
+function checkedSheet(name) {
   var s = ss().getSheetByName(name);
   if (!s) {
     s = ss().insertSheet(name);
@@ -426,6 +445,7 @@ function sheet(name) {
  * Apps Script is slow at many small calls, fast at few large ones.
  */
 function readAll(name) {
+  flushAppends(name);
   var s = sheet(name);
   var last = s.getLastRow();
   if (last < 2) return [];
@@ -482,13 +502,42 @@ function appendRow(name, obj) {
     if (typeof v === 'boolean') return v;
     return asText(k, v);
   });
-  s.appendRow(row);
+  if (APPEND_BUF) {
+    // Inside a locked write: held back and written together with the rest (see flushAppends).
+    (APPEND_BUF[name] = APPEND_BUF[name] || []).push(row);
+  } else {
+    s.appendRow(row);
+  }
   return obj;
+}
+
+/**
+ * Rows added during one locked write are collected and written one tab at a time, in a single
+ * call per tab, instead of one slow call per row (a bill with several lines, a payment and its
+ * log entry used to be that many round trips to Google).
+ *
+ * Reading a tab, finding or changing a row in it, or deleting from it writes that tab's waiting
+ * rows first, so the code in between always sees its own earlier writes exactly as before.
+ */
+var APPEND_BUF = null;
+
+function flushAppends(name) {
+  if (!APPEND_BUF) return;
+  var names = name ? [name] : Object.keys(APPEND_BUF);
+  for (var i = 0; i < names.length; i++) {
+    var rows = APPEND_BUF[names[i]];
+    if (!rows || !rows.length) continue;
+    APPEND_BUF[names[i]] = [];
+    var s = sheet(names[i]);
+    var width = SCHEMA[names[i]].length;
+    s.getRange(s.getLastRow() + 1, 1, rows.length, width).setValues(rows);
+  }
 }
 
 /** Find the 1-based sheet row number for a record id. */
 function findRow(name, idValue, idField) {
   idField = idField || 'id';
+  flushAppends(name);
   var s = sheet(name);
   var last = s.getLastRow();
   if (last < 2) return -1;
@@ -505,6 +554,7 @@ function findRow(name, idValue, idField) {
 
 /** Update specific fields of a row, leaving others untouched. */
 function updateRow(name, rowNum, patch) {
+  flushAppends(name);
   var s = sheet(name);
   var headers = SCHEMA[name];
   for (var k in patch) {
@@ -535,12 +585,20 @@ function getById(name, idValue, idField) {
 function withLock(fn) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) fail('System busy, please try again');
+  var outermost = APPEND_BUF === null;
+  if (outermost) APPEND_BUF = {};
   try {
     var result = fn();
+    if (outermost) flushAppends();
     SpreadsheetApp.flush();
     clearCache();
     return result;
   } finally {
+    if (outermost) {
+      // Whatever was recorded before a refusal stays recorded, as it always has.
+      try { flushAppends(); } catch (e) { /* the original error is the one to report */ }
+      APPEND_BUF = null;
+    }
     lock.releaseLock();
   }
 }
@@ -553,7 +611,30 @@ function clearCache() {
    Utilities
    ========================================================================== */
 
+/**
+ * Ids the dashboard chose for the records this request creates, by prefix, in the order it made
+ * them. uid() hands them out in that same order, so what the screen showed instantly and what
+ * ends up in the Sheet are the same record. Anything that does not fit (wrong shape, already
+ * used up, a different count) simply falls back to a fresh id, so a hint can never break a save.
+ */
+var ID_HINTS = null;
+
+function setIdHints(list) {
+  ID_HINTS = null;
+  if (!list || !list.length || list.length > 500) return;
+  var map = {};
+  for (var i = 0; i < list.length; i++) {
+    var id = String(list[i]);
+    var m = /^([a-z]{2,5})_[a-z0-9]{6,30}$/.exec(id);
+    if (!m) continue;
+    (map[m[1]] = map[m[1]] || []).push(id);
+  }
+  ID_HINTS = map;
+}
+
 function uid(prefix) {
+  var hint = ID_HINTS && ID_HINTS[prefix];
+  if (hint && hint.length) return hint.shift();
   return prefix + '_' + new Date().getTime().toString(36) +
          Math.random().toString(36).slice(2, 7);
 }
@@ -1691,6 +1772,129 @@ function toggleArchive(tab, id, label) {
   });
 }
 
+/**
+ * Delete rows by id in as few calls as possible: neighbouring rows go in one call. The sheet is
+ * read once for the id column; deleting from the bottom up keeps the row numbers valid.
+ */
+function deleteRowsByIds(name, ids, field) {
+  flushAppends(name);
+  var s = sheet(name);
+  var last = s.getLastRow();
+  if (last < 2) return 0;
+  var col = SCHEMA[name].indexOf(field || 'id') + 1;
+  if (col < 1) return 0;
+  var values = s.getRange(2, col, last - 1, 1).getValues();
+  var rows = [];
+  for (var i = 0; i < values.length; i++) {
+    if (ids[String(values[i][0])]) rows.push(i + 2);
+  }
+  var gone = rows.length;
+  while (rows.length) {
+    var end = rows.pop();
+    var start = end;
+    while (rows.length && rows[rows.length - 1] === start - 1) start = rows.pop();
+    s.deleteRows(start, end - start + 1);
+  }
+  return gone;
+}
+
+function idSet(list) {
+  var out = {};
+  for (var i = 0; i < list.length; i++) out[String(list[i].id)] = 1;
+  return out;
+}
+
+/**
+ * Permanently delete a party and everything of theirs: bills and their lines, payments, returns,
+ * cheques, advances, saved prices and share link. Stock and balances are worked out from those
+ * records, so the stock comes back and the money reverses by their removal. Super admin only.
+ * (Mirrors the 'deleteParty' action of the browser adapter.)
+ */
+function deleteParty(p) {
+  return withLock(function () {
+    var me = findUserByName(readAll('Users'), ACTING_USER);
+    if (!me || !userIsSuper(me) || !userIsActive(me)) {
+      fail('Only a super admin can permanently delete a party.');
+    }
+    var party = getById('Parties', p.id);
+    if (!p.id || !party) fail('Party not found');
+
+    var day = function (v) { return String(v || '').slice(0, 10); };
+
+    var bills = readAll('Bills').filter(function (b) { return b.partyId === party.id; });
+    var billIds = idSet(bills);
+
+    var payments = readAll('Payments').filter(function (x) {
+      return x.partyId === party.id || billIds[String(x.billId)];
+    });
+    var payIds = idSet(payments);
+
+    var lines = readAll('BillItems').filter(function (l) { return billIds[String(l.billId)]; });
+    var returns = readAll('Returns').filter(function (r) { return billIds[String(r.billId)]; });
+    var cheques = readAll('Cheques').filter(function (c) {
+      return c.partyId === party.id || billIds[String(c.billId)] || (c.paymentId && payIds[String(c.paymentId)]);
+    });
+    var advances = readAll('PartyAdvances').filter(function (a) { return a.partyId === party.id; });
+
+    // A set-off paid their bills and the same amount to their supplier side: take that back too.
+    var supplier = null;
+    var sups = readAll('Suppliers');
+    for (var si = 0; si < sups.length; si++) if (sups[si].partyId === party.id) supplier = sups[si];
+    var setOffIds = {};
+    if (supplier) {
+      var groups = {};
+      payments.forEach(function (x) {
+        if (x.method !== 'Set-off' || x.reversed) return;
+        var k = day(x.date) + '|' + (x.note || '');
+        groups[k] = r2((groups[k] || 0) + (Number(x.amount) || 0));
+      });
+      var sp = readAll('SupplierPayments');
+      Object.keys(groups).forEach(function (k) {
+        var cut = k.indexOf('|');
+        var dd = k.substring(0, cut), note = k.substring(cut + 1);
+        for (var i = 0; i < sp.length; i++) {
+          if (setOffIds[sp[i].id] || sp[i].supplierId !== supplier.id || sp[i].method !== 'Set-off') continue;
+          if (day(sp[i].date) === dd && (sp[i].note || '') === note && r2(sp[i].amount) === groups[k]) {
+            setOffIds[sp[i].id] = 1;
+            break;
+          }
+        }
+      });
+    }
+
+    var paid = 0;
+    payments.forEach(function (x) {
+      if (!x.reversed && !x.isAdvance && x.method !== 'Advance') paid += Number(x.amount) || 0;
+    });
+    paid = r2(paid);
+    var restocked = 0;
+    lines.forEach(function (l) { restocked += Number(l.qty) || 0; });
+
+    deleteRowsByIds('BillItems', idSet(lines));
+    deleteRowsByIds('Returns', idSet(returns));
+    deleteRowsByIds('Payments', payIds);
+    deleteRowsByIds('Cheques', idSet(cheques));
+    deleteRowsByIds('PartyAdvances', idSet(advances));
+    deleteRowsByIds('SupplierPayments', setOffIds);
+    var priceRows = readAll('PartyItemPrices').filter(function (x) { return x.partyId === party.id; });
+    deleteRowsByIds('PartyItemPrices', idSet(priceRows));
+    deleteRowsByIds('Bills', billIds);
+    deleteRowsWhere('PartyLedgerLinks', 'partyId', party.id);
+    if (supplier) updateRow('Suppliers', findRow('Suppliers', supplier.id), { partyId: '' });
+    deleteRowById('Parties', party.id);
+
+    var info = {
+      ok: true, bills: bills.length, payments: payments.length, paid: paid,
+      returns: returns.length, restocked: restocked
+    };
+    logActivity('party', party.id, 'delete',
+      'Permanently deleted party "' + party.name + '" with ' + bills.length + ' bill(s), ' +
+      payments.length + ' payment(s) (' + paid + ' paid), ' + returns.length + ' return(s); ' +
+      restocked + ' item quantity put back in stock', party, null);
+    return info;
+  });
+}
+
 /* ==========================================================================
    Items
    ========================================================================== */
@@ -2005,6 +2209,7 @@ function applyAdvance(partyId, amount) {
 
 /** Remove rows matching a field value (used only to replace bill lines on edit). */
 function deleteRowsWhere(name, field, value) {
+  flushAppends(name);
   var s = sheet(name);
   var last = s.getLastRow();
   if (last < 2) return;
@@ -3481,6 +3686,7 @@ function adoptPurchases(p) {
       if (!(Number(l.costPrice) >= 0)) fail('Line ' + (i + 1) + ': price must be zero or more');
     });
 
+    flushAppends('Purchases');
     var s = sheet('Purchases');
     var last = s.getLastRow();
     var cols = SCHEMA.Purchases;

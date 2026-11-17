@@ -80,10 +80,14 @@ async function callSheets(action, payload = {}, attempt = 0, requestId = null) {
       await sleep(800 * (attempt + 1));
       return callSheets(action, payload, attempt + 1, rid);
     }
-    throw new Error(
+    const err = new Error(
       `The backend returned an error page (HTTP ${res.status}). ` +
       'If this keeps happening, redeploy the Apps Script Web App.'
     );
+    // Whether the write happened is unknown. A queued write is retried under the same request id,
+    // which the backend uses to carry out a write once.
+    err.isTransient = true;
+    throw err;
   }
 
   if (!json.ok) {
@@ -129,14 +133,163 @@ async function call(action, payload = {}, requestId = null) {
     }
     return local.handle(action, payload);
   }
+
+  if (action === 'bootstrap') return bootstrapAny();
+
+  // Saving is instant: rehearse it on the working copy, show it, and send the real
+  // save to the Sheet in the background (see "Instant saving" below).
+  if (OPTIMISTIC.has(action) && shadowUsable()) {
+    const done = await tryOptimistic(action, payload);
+    if (done) return done.value;
+  }
+
+  // Anything that goes straight to the Sheet must not overtake saves still waiting to be sent.
+  if (!READ_ONLY_ACTIONS.has(action) && !requestId) await pump();
   return callSheets(action, payload, 0, requestId);
 }
 
 /* ------------------------------------------------------------------ */
-/* Offline queue (FR-12 / Plan 7.10)                                   */
+/* Instant saving                                                      */
 /* ------------------------------------------------------------------ */
+//
+// Each write to the Google Sheet is a round trip of several seconds, and the screen used to wait
+// for it and then for a full reload of every tab. Now:
+//
+//   1. the save is rehearsed on the working copy ("shadow", localAdapter.js) with the same
+//      rules this app always applies, so the screen updates immediately;
+//   2. the real save is put in a stored queue and sent to the Sheet in the background, in order,
+//      carrying the ids the screen already shows so both sides hold the SAME records;
+//   3. when the queue is empty the screen is refreshed from the Sheet, which is the truth. A save
+//      the Sheet refuses is reported and disappears at that refresh.
+//
+// The queue is kept in storage, so closing the tab or losing the connection does not lose a save.
+
+/** Writes the working copy can rehearse: the local adapter mirrors each of them. */
+const OPTIMISTIC = new Set([
+  'saveBill', 'voidBill', 'setDelivery', 'setLineDelivery',
+  'addPayment', 'settleParty', 'reversePayment', 'deletePayment', 'updatePayment',
+  'addReturn', 'addRefund',
+  'saveParty', 'archiveParty', 'saveItem', 'archiveItem',
+  'saveCheque', 'setChequeStatus', 'deleteCheque',
+  'addAdvance', 'deleteAdvance',
+  'savePurchase', 'updatePurchase', 'deletePurchase',
+  'saveSupplier', 'archiveSupplier', 'savePurchaseBill', 'voidPurchaseBill', 'setPurchaseReceipt',
+  'addSupplierPayment', 'deleteSupplierPayment', 'addSupplierReturn', 'deleteSupplierReturn',
+  'setOffParty',
+  'saveEmployee', 'addEmployeeTx', 'saveExpense', 'saveStockLoss', 'saveAsset',
+  'saveSettings',
+]);
+
+let shadowReady = false;     // the working copy holds the Sheet's data
+let shadowBroken = false;    // it could not be stored (storage full): save the slow, direct way
+let shadowVersion = 0;       // counts instant saves, so a slower reload can tell it is out of date
+const ME_KEY = 'ewd_last_me';
+
+const shadowUsable = () => CONFIG.backend === 'sheets' && shadowReady && !shadowBroken;
+const clone = (v) => JSON.parse(JSON.stringify(v ?? {}));
+
+/** Anything saved on screen that the Sheet has not confirmed yet. */
+function queueBusy() {
+  return getQueue().length > 0 || Boolean(pumping);
+}
+
+function rememberMe(me) {
+  try { localStorage.setItem(ME_KEY, JSON.stringify(me ?? null)); } catch { /* ignore */ }
+}
+
+function lastMe() {
+  try {
+    const m = JSON.parse(localStorage.getItem(ME_KEY) || 'null');
+    if (m) return m;
+  } catch { /* fall through */ }
+  const ses = local.readSession();
+  return ses ? {
+    id: ses.username, username: ses.username, fullName: ses.fullName || '', role: ses.role || 'admin',
+    status: 'active', allowedPages: ses.allowedPages || [], createdAt: '',
+  } : null;
+}
+
+/** The screen's data, read from the working copy (it holds the Sheet's data plus what is unsent). */
+async function shadowBootstrap() {
+  const d = await local.handle('bootstrap');
+  // The working copy has no user accounts; keep who is signed in as the Sheet last said.
+  return { ...d, me: lastMe() };
+}
+
+/**
+ * The screen's data. While saves are waiting to go out, the working copy answers (the Sheet does
+ * not have them yet, and replacing the screen with its older picture would make them vanish).
+ * Otherwise the Sheet answers and the working copy is refilled from it.
+ */
+async function bootstrapAny() {
+  if (shadowUsable() && queueBusy()) return shadowBootstrap();
+
+  const version = shadowVersion;
+  const d = await callSheets('bootstrap', {}, 0, null);
+  if (d?.me) rememberMe(d.me);
+
+  // A save made while this was loading is not in `d`, so `d` must not replace the screen.
+  const newer = () => queueBusy() || version !== shadowVersion;
+  if (shadowBroken) return d;
+  if (shadowReady && newer()) return shadowBootstrap();
+
+  try {
+    await local.seedShadow(d);
+    shadowReady = true;
+  } catch {
+    // Storage is full or blocked: no instant saves on this device, the old direct way still works.
+    shadowBroken = true;
+    return d;
+  }
+  return newer() ? shadowBootstrap() : d;
+}
+
+/** Rehearse a write. Returns { value } when it is queued for the Sheet, or null to save directly. */
+async function tryOptimistic(action, payload) {
+  let out;
+  try {
+    out = await local.handleCapturing(action, clone(payload));
+  } catch (err) {
+    // Whatever stopped the rehearsal — a rule, a stale copy, full storage — the Sheet gets the
+    // final say, so this save goes to it directly and its answer (or error) is what is shown.
+    if (err?.storageFull) shadowBroken = true;
+    return null;
+  }
+
+  const tempId = `q_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const entry = {
+    tempId,
+    action,
+    // Settings are stored key by key, so an extra key would become a setting.
+    payload: action === 'saveSettings' || !out.ids.length ? payload : { ...payload, _ids: out.ids },
+    requestId: `q_${tempId}`,
+    createdAt: new Date().toISOString(),
+    syncedStatus: 'pending',
+    localIds: collectIds(out.result),
+    billNo: out.result?.billNo || '',
+  };
+  shadowVersion += 1;
+  enqueueEntry(entry);
+  pump();
+  return { value: out.result };
+}
+
+/** `{ 'id': 'bil_…', 'lines.0.id': … }` — where each record id sits in a result. */
+function collectIds(v, path = '', out = {}, depth = 0) {
+  if (!v || typeof v !== 'object' || depth > 3) return out;
+  if (!Array.isArray(v) && typeof v.id === 'string') out[`${path}id`] = v.id;
+  Object.keys(v).forEach((k) => {
+    if (v[k] && typeof v[k] === 'object') collectIds(v[k], `${path}${k}.`, out, depth + 1);
+  });
+  return out;
+}
+
+/* ---- the stored queue ---- */
 
 const QUEUE_KEY = 'ewd_pending_sync';
+const ID_MAP_KEY = 'ewd_id_map';
+const LOCK_KEY = 'ewd_pump_lock';
+const TAB_ID = Math.random().toString(36).slice(2, 9);
 
 export function getQueue() {
   try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); }
@@ -152,84 +305,182 @@ export function queueCount() {
   return getQueue().length;
 }
 
-/** Queue a write that failed because we were offline. */
+function enqueueEntry(entry) {
+  setQueue([...getQueue(), entry]);
+}
+
+/** Queue a write that failed because we were offline (the slow, direct path). */
 function enqueue(action, payload) {
-  const q = getQueue();
   const tempId = `q_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  q.push({
+  enqueueEntry({
     tempId,
     action,
     payload,
-    // Fixed now and reused on every flush attempt. Without it each attempt
-    // would look like a brand new write to the backend, so a flush that sent a
-    // record and then failed before clearing the queue would duplicate it.
+    // Fixed now and reused on every attempt: the backend carries out one request id once, so a
+    // send that succeeded but was never confirmed cannot duplicate a record.
     requestId: `q_${tempId}`,
     createdAt: new Date().toISOString(),
     syncedStatus: 'pending',
   });
-  setQueue(q);
 }
 
-/**
- * The flush currently running, if any.
- *
- * Without this, two callers that start a flush at the same moment each read
- * the queue before either writes it back, and every queued write is sent
- * twice — a duplicate bill, a duplicate payment. That is not a remote
- * possibility: reconnecting fires 'online' at every listener at once, and a
- * flush is also kicked off from the app's own reconnect handler.
- *
- * Sharing the in-flight promise means a second caller waits for, and reports,
- * the same run rather than starting a competing one.
- */
-let flushing = null;
+function removeEntry(tempId) {
+  setQueue(getQueue().filter((e) => e.tempId !== tempId));
+}
 
-/**
- * Flush queued writes once connectivity returns.
- * Entries that fail stay queued so nothing is silently lost.
- */
-export async function flushQueue() {
-  if (flushing) return flushing;
-  if (!navigator.onLine) return { synced: 0, failed: 0 };
-  if (!getQueue().length) return { synced: 0, failed: 0 };
+/* ---- ids the Sheet gave a record other than the one the screen showed (an older script) ---- */
 
-  flushing = (async () => {
-    // Claim the queue before sending anything: a write that is in flight must
-    // not still be sitting in storage where another flush could pick it up.
-    // Failures are put back below.
-    const q = getQueue();
-    setQueue([]);
+function readIdMap() {
+  try { return JSON.parse(localStorage.getItem(ID_MAP_KEY) || '{}') || {}; }
+  catch { return {}; }
+}
 
-    const remaining = [];
-    let synced = 0;
-    for (const entry of q) {
-      try {
-        await call(entry.action, entry.payload, entry.requestId || null);
-        synced++;
-      } catch {
-        remaining.push(entry);
-      }
-    }
+function applyIdMap(payload) {
+  const map = readIdMap();
+  const keys = Object.keys(map);
+  if (!keys.length) return payload;
+  let text = JSON.stringify(payload);
+  keys.forEach((k) => { if (text.includes(k)) text = text.split(k).join(map[k]); });
+  return JSON.parse(text);
+}
 
-    // Anything queued while this ran is still pending, so keep it.
-    setQueue([...remaining, ...getQueue()]);
-    return { synced, failed: remaining.length };
-  })();
-
-  try {
-    return await flushing;
-  } finally {
-    flushing = null;
+function learnIds(entry, result) {
+  const then = entry.localIds || {};
+  const now = collectIds(result);
+  const changes = {};
+  Object.keys(then).forEach((path) => {
+    if (now[path] && now[path] !== then[path]) changes[then[path]] = now[path];
+  });
+  if (Object.keys(changes).length) {
+    const map = { ...readIdMap(), ...changes };
+    const keys = Object.keys(map);
+    keys.slice(0, Math.max(0, keys.length - 300)).forEach((k) => { delete map[k]; });
+    try { localStorage.setItem(ID_MAP_KEY, JSON.stringify(map)); } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('ewd:ids-remapped', { detail: changes }));
+  }
+  if (entry.billNo && result?.billNo && result.billNo !== entry.billNo) {
+    window.dispatchEvent(new CustomEvent('ewd:write-note', {
+      detail: { message: `Bill ${entry.billNo} was saved as ${result.billNo} (that number was taken).` },
+    }));
   }
 }
 
-// Auto-flush when the browser comes back online.
-//
-// AppContext also flushes on reconnect so it can refresh the screen and toast
-// the result. Both call the same guarded function, so the second one joins the
-// first rather than replaying the queue.
+/* ---- sending ---- */
+
+let pumping = null;
+let retryTimer = null;
+
+/** Only one tab sends at a time; a lock that was not renewed for a while is dead. */
+function takeLock() {
+  try {
+    const [owner, at] = String(localStorage.getItem(LOCK_KEY) || '').split('|');
+    if (owner && owner !== TAB_ID && Date.now() - Number(at) < 90000) return false;
+    localStorage.setItem(LOCK_KEY, `${TAB_ID}|${Date.now()}`);
+  } catch { /* no storage: carry on */ }
+  return true;
+}
+
+function dropLock() {
+  try {
+    if (String(localStorage.getItem(LOCK_KEY) || '').startsWith(`${TAB_ID}|`)) localStorage.removeItem(LOCK_KEY);
+  } catch { /* ignore */ }
+}
+
+function retryLater(ms = 5000) {
+  if (retryTimer) return;
+  retryTimer = setTimeout(() => { retryTimer = null; pump(); }, ms);
+}
+
+const isSessionError = (err) => /session has expired|sign in again/i.test(err?.message || '');
+
+/**
+ * Send queued saves to the Sheet, oldest first, one at a time. Resolves when the queue is empty or
+ * cannot go on right now (offline, signed out, another tab is sending).
+ */
+export function pump() {
+  if (pumping) return pumping;
+  if (!getQueue().length) return Promise.resolve();
+
+  pumping = (async () => {
+    let stalled = false;
+    try {
+      while (getQueue().length) {
+        if (CONFIG.backend !== 'sheets' || !navigator.onLine || !local.getToken()) { stalled = true; break; }
+        if (!takeLock()) { stalled = true; break; }
+
+        const entry = getQueue()[0];
+        let result;
+        try {
+          result = await callSheets(entry.action, applyIdMap(entry.payload), 0, entry.requestId);
+        } catch (err) {
+          if (err?.isNetworkError || isSessionError(err)) { stalled = true; break; }
+
+          if (err?.isTransient && (entry.tries || 0) < 2) {
+            // Unclear whether it was written. Try again under the same request id.
+            setQueue(getQueue().map((e) => (e.tempId === entry.tempId ? { ...e, tries: (e.tries || 0) + 1 } : e)));
+            stalled = true;
+            break;
+          }
+
+          // The Sheet refused it for good. Report it; the refresh that follows removes it from the screen.
+          removeEntry(entry.tempId);
+          window.dispatchEvent(new CustomEvent('ewd:write-failed', {
+            detail: { action: entry.action, message: err?.message || 'The Google Sheet did not accept it' },
+          }));
+          continue;
+        }
+        learnIds(entry, result);
+        removeEntry(entry.tempId);
+      }
+    } finally {
+      dropLock();
+      pumping = null;
+    }
+
+    if (!getQueue().length) {
+      window.dispatchEvent(new CustomEvent('ewd:writes-drained'));
+    } else if (stalled) {
+      retryLater();
+    } else {
+      pump();     // saved while this was finishing
+    }
+  })();
+  return pumping;
+}
+
+/** Drop the working copy (sign-out). Only when nothing is waiting to be sent. */
+export function forgetShadow() {
+  if (getQueue().length) return;
+  local.clearShadow();
+  shadowReady = false;
+  shadowVersion += 1;
+}
+
+/** Send what is queued (back online, signed in again). */
+export async function flushQueue() {
+  const before = getQueue().length;
+  if (!before) return { synced: 0, failed: 0 };
+  await pump();
+  const after = getQueue().length;
+  return { synced: Math.max(0, before - after), failed: after };
+}
+
+if (CONFIG.backend === 'sheets') {
+  local.useShadowStore();
+  shadowReady = getQueue().length > 0 && local.hasShadow();
+}
+
 if (typeof window !== 'undefined') {
-  window.addEventListener('online', () => { flushQueue(); });
+  window.addEventListener('online', () => { pump(); });
+  // Another tab finished sending what this one queued: look again.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== QUEUE_KEY) return;
+    const n = getQueue().length;
+    window.dispatchEvent(new CustomEvent('ewd:queue-changed', { detail: n }));
+    if (!n) window.dispatchEvent(new CustomEvent('ewd:writes-drained'));
+  });
+  // Saves left over from the last visit go out as soon as this page loads.
+  setTimeout(() => { pump(); }, 1500);
 }
 
 /**
@@ -282,6 +533,8 @@ export const api = {
   // Parties
   saveParty:      (party)       => call('saveParty', party),
   archiveParty:   (id)          => call('archiveParty', { id }),
+  // Permanent: the party, all their bills, payments, returns, cheques and advances. Super admin only.
+  deleteParty:    (id)          => call('deleteParty', { id }),
   // Per-party ledger password. An empty password removes the lock.
   setPartyLock:   (partyId, password, currentPassword) =>
     call('setPartyLock', { partyId, password, currentPassword }),

@@ -211,6 +211,7 @@ export default function OldDataImport() {
               </div>
 
               <div className="small" style={{ fontWeight: 600, margin: '14px 0 4px' }}>Items and shop records</div>
+              <div className="table-wrap">
               <table className="tbl">
                 <tbody>
                   <tr>
@@ -238,7 +239,7 @@ export default function OldDataImport() {
                     </td>
                   </tr>
                 </tbody>
-              </table>
+              </table></div>
 
               <div className="small" style={{ fontWeight: 600, margin: '14px 0 4px' }}>
                 Installment customers — what they still owe

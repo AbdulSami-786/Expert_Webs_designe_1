@@ -6,7 +6,7 @@
 // on the network for routine actions.
 
 import { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import api, { queueCount, flushQueue } from '../lib/api';
+import api, { queueCount, flushQueue, forgetShadow } from '../lib/api';
 import { readSession } from '../lib/localAdapter';
 import { startAutoSync } from '../lib/sync';
 import { relockAll } from '../lib/partyLock';
@@ -54,10 +54,10 @@ export function AppProvider({ children }) {
   const logoutRef = useRef(() => {});
 
   /* ---------------- Toasts (brief, non-blocking) ---------------- */
-  const toast = useCallback((message, type = 'success') => {
+  const toast = useCallback((message, type = 'success', ms = 3200) => {
     const id = ++toastId.current;
     setToasts((t) => [...t, { id, message, type }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3200);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), ms);
   }, []);
 
   /* ---------------- Bootstrap ---------------- */
@@ -156,18 +156,17 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const up = async () => {
       setOnline(true);
+      // Anything saved while offline goes out now. The screen refreshes itself when the last
+      // one is confirmed (the 'ewd:writes-drained' listener below).
       const res = await flushQueue();
       setPending(queueCount());
-      if (res.synced > 0) {
-        toast(`${res.synced} queued ${res.synced === 1 ? 'bill' : 'bills'} synced`, 'success');
-        refresh().catch(() => {});
-      }
+      if (res.synced > 0) toast(`${res.synced} saved ${res.synced === 1 ? 'change' : 'changes'} synced`, 'success');
     };
     const down = () => {
       setOnline(false);
       toast(CONFIG.backend === 'local'
         ? 'You are offline — everything is saved on this computer'
-        : 'You are offline — bills will be queued', 'info');
+        : 'You are offline — your changes are kept and will sync when you reconnect', 'info');
     };
     const onQueue = (e) => setPending(e.detail ?? queueCount());
 
@@ -180,6 +179,52 @@ export function AppProvider({ children }) {
       window.removeEventListener('ewd:queue-changed', onQueue);
     };
   }, [toast, refresh]);
+
+  /* ---------------- Instant saving: what happens after the screen has moved on ---------------- */
+  // Every save shows at once and goes to the Google Sheet in the background (lib/api.js). These
+  // follow that background work: refresh when the Sheet has it all, tell the person about any
+  // save the Sheet refused, and keep an open page pointing at a record whose id changed.
+  useEffect(() => {
+    if (!session) return undefined;
+
+    const LABELS = {
+      saveBill: 'The bill', addPayment: 'The payment', settleParty: 'The payment', addReturn: 'The return',
+      addRefund: 'The refund', saveParty: 'The party', saveItem: 'The item', savePurchaseBill: 'The purchase',
+      savePurchase: 'The purchase', saveSupplier: 'The supplier', addSupplierPayment: 'The supplier payment',
+      saveExpense: 'The expense', saveEmployee: 'The employee', addEmployeeTx: 'The entry',
+      saveAsset: 'The asset', saveStockLoss: 'The stock loss', saveCheque: 'The cheque',
+      addAdvance: 'The advance', voidBill: 'Cancelling the bill',
+    };
+
+    const onDrained = () => { refresh({ silent: true }).catch(() => {}); };
+    const onFailed = (e) => {
+      const { action, message } = e.detail || {};
+      toast(`${LABELS[action] || 'A change'} could not be saved to the Google Sheet and was undone: ${message}`, 'error', 12000);
+      refresh({ silent: true }).catch(() => {});
+    };
+    const onNote = (e) => { if (e.detail?.message) toast(e.detail.message, 'info', 8000); };
+    const onRemapped = (e) => {
+      const changes = e.detail || {};
+      const here = window.location.hash;
+      const hit = Object.keys(changes).find((k) => here.includes(k));
+      if (hit) window.location.replace(here.split(hit).join(changes[hit]));
+    };
+
+    window.addEventListener('ewd:writes-drained', onDrained);
+    window.addEventListener('ewd:write-failed', onFailed);
+    window.addEventListener('ewd:write-note', onNote);
+    window.addEventListener('ewd:ids-remapped', onRemapped);
+
+    // Saves left from a previous visit (closed tab, lost connection) go out now.
+    flushQueue().catch(() => {});
+
+    return () => {
+      window.removeEventListener('ewd:writes-drained', onDrained);
+      window.removeEventListener('ewd:write-failed', onFailed);
+      window.removeEventListener('ewd:write-note', onNote);
+      window.removeEventListener('ewd:ids-remapped', onRemapped);
+    };
+  }, [session, refresh, toast]);
 
   /* ---------------- Google Sheets sync ---------------- */
   // Runs for the whole signed-in session, not just while Settings is open, so
@@ -211,6 +256,9 @@ export function AppProvider({ children }) {
   const logout = useCallback(() => {
     // Every password-locked party ledger closes with the session.
     relockAll();
+    // The working copy of the data goes with the session — unless it still holds saves the Google
+    // Sheet has not received, which must survive until the next sign-in sends them.
+    forgetShadow();
     localStorage.removeItem('ewd_session');
     setSession(null);
     setData(EMPTY);
@@ -225,7 +273,9 @@ export function AppProvider({ children }) {
   const mutate = useCallback(async (fn, successMsg) => {
     try {
       const result = await fn();
-      await refresh();
+      // Quiet: no full-screen loading state for a refresh that, after an instant save, reads the
+      // local working copy. A failed refresh must not turn a save that worked into an error.
+      await refresh({ silent: true }).catch(() => {});
       if (result?.queued) {
         setPending(queueCount());
         toast('Saved offline — will sync when you reconnect', 'info');

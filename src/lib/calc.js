@@ -1835,6 +1835,57 @@ export function linkedSupplier(partyId, suppliers = []) {
 }
 
 /**
+ * Everything that goes when a party is deleted for good, and what that gives back.
+ *
+ * Stock needs no separate step: how much of an item is left is worked out from the bills that
+ * still exist, so once a party's bills are gone the quantities they took are back in stock
+ * (returns that put goods back go with the bills, so nothing is counted twice). Money works the
+ * same way: cash and bank balances are worked out from the payments, so removing them puts the
+ * balance back where it was before they were taken.
+ */
+export function partyDeletePlan(partyId, d) {
+  const day = (v) => String(v || '').slice(0, 10);
+  const bills = (d.bills || []).filter((b) => b.partyId === partyId);
+  const billIds = new Set(bills.map((b) => b.id));
+
+  const payments = (d.payments || []).filter((p) => p.partyId === partyId || billIds.has(p.billId));
+  const paymentIds = new Set(payments.map((p) => p.id));
+  const lines = (d.billItems || []).filter((l) => billIds.has(l.billId));
+  const returns = (d.returns || []).filter((r) => billIds.has(r.billId));
+  const cheques = (d.cheques || []).filter((c) => c.partyId === partyId || billIds.has(c.billId)
+    || (c.paymentId && paymentIds.has(c.paymentId)));
+  const advances = (d.partyAdvances || []).filter((a) => a.partyId === partyId);
+  const prices = (d.partyItemPrices || []).filter((x) => x.partyId === partyId);
+
+  // A set-off paid the party's bills AND the same amount to their supplier side. Taking the bills
+  // away leaves that supplier payment with nothing opposite it, so it goes too.
+  const supplier = linkedSupplier(partyId, d.suppliers || []);
+  const groups = {};
+  payments.filter((p) => p.method === 'Set-off' && !p.reversed).forEach((p) => {
+    const k = `${day(p.date)}|${p.note || ''}`;
+    groups[k] = r2((groups[k] || 0) + (Number(p.amount) || 0));
+  });
+  const taken = new Set();
+  const setOffs = [];
+  if (supplier) {
+    Object.entries(groups).forEach(([k, amt]) => {
+      const [dd, note] = [k.slice(0, k.indexOf('|')), k.slice(k.indexOf('|') + 1)];
+      const hit = (d.supplierPayments || []).find((sp) => !taken.has(sp.id) && sp.supplierId === supplier.id
+        && sp.method === 'Set-off' && day(sp.date) === dd && (sp.note || '') === note && r2(sp.amount) === amt);
+      if (hit) { taken.add(hit.id); setOffs.push(hit); }
+    });
+  }
+
+  const live = (p) => !p.reversed;
+  return {
+    bills, billIds, lines, payments, returns, cheques, advances, prices, supplier, setOffs,
+    paid: r2(payments.filter((p) => live(p) && !p.isAdvance && p.method !== 'Advance').reduce((s, p) => s + (Number(p.amount) || 0), 0)),
+    refunded: r2(returns.reduce((s, r) => s + (Number(r.refundAmount) || 0), 0)),
+    restocked: lines.reduce((s, l) => s + (Number(l.qty) || 0), 0),
+  };
+}
+
+/**
  * One running statement covering both sides, oldest first.
  *
  * The sales rows are partyStatement's own. The purchase rows are the linked

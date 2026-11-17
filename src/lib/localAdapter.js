@@ -6,12 +6,18 @@
 // (Safety Guide 2.2) and the never-delete rule (Safety Guide 2.1).
 
 import { CONFIG, DEFAULT_METHODS } from './config';
-import { uid, todayISO, r2, addDays } from './format';
+import { uid, todayISO, r2, addDays, captureIds } from './format';
 import {
   billTotals, billState, billPaymentRoom, lineDeliveredQty, lineReceivedQty, supplierBalance,
+  partyDeletePlan,
 } from './calc';
 
 const DB_KEY = 'ewd_db_v1';
+// Where the working copy lives when the Google Sheet is the real database (see
+// "Shadow copy" at the bottom). Kept apart from DB_KEY so it can never touch
+// records a computer saved in the all-local mode.
+const SHADOW_KEY = 'ewd_shadow_v1';
+let dbKey = DB_KEY;
 const SESSION_KEY = 'ewd_session';
 
 /* ------------------------------------------------------------------ */
@@ -58,7 +64,7 @@ function emptyDb() {
 
 function read() {
   try {
-    const raw = localStorage.getItem(DB_KEY);
+    const raw = localStorage.getItem(dbKey);
     if (raw) return { ...emptyDb(), ...JSON.parse(raw) };
   } catch (e) {
     console.error('Local DB read failed, starting fresh', e);
@@ -68,15 +74,17 @@ function read() {
 
 function write(db) {
   try {
-    localStorage.setItem(DB_KEY, JSON.stringify(db));
+    localStorage.setItem(dbKey, JSON.stringify(db));
   } catch (e) {
     // A blocked write (quota exceeded, or Safari/Firefox private mode) must
     // never look like a success: the record would sit in memory, appear saved,
     // and vanish on the next reload. Surfacing it lets the UI show the error.
-    throw new Error(
+    const full = new Error(
       'Could not save to this device’s storage. It may be full, or the browser ' +
       'is in private mode. Free up space or export a backup, then try again.'
     );
+    full.storageFull = true;
+    throw full;
   }
   return db;
 }
@@ -101,7 +109,7 @@ function db() {
   _db = read();
   if (!_db) {
     _db = emptyDb();
-    if (CONFIG.seedDemoData) seed(_db);
+    if (CONFIG.seedDemoData && dbKey === DB_KEY) seed(_db);
     ensureAdmin(_db);
     write(_db);
   } else {
@@ -465,7 +473,8 @@ function assertReturnsCovered(d, billId, line, newItemId, newQty) {
 /* Action handler                                                      */
 /* ------------------------------------------------------------------ */
 
-const delay = (ms = 90) => new Promise((res) => setTimeout(res, ms));
+// The pause only mimics a network hop; the shadow copy has no hop to mimic.
+const delay = (ms = 90) => (dbKey === SHADOW_KEY ? Promise.resolve() : new Promise((res) => setTimeout(res, ms)));
 
 // Actions run one at a time. Each one reads the whole DB and writes the whole
 // DB back, so two overlapping actions would both read the same starting state
@@ -752,6 +761,48 @@ async function perform(action, payload = {}) {
       logActivity(d, 'party', p.id, 'edit', `${p.status === 'archived' ? 'Archived' : 'Restored'} party "${p.name}"`);
       save();
       return p;
+    }
+
+    /* Permanently remove a party and everything that hangs off it. Unlike archiving, nothing of
+       theirs is kept: the bills, the lines on them, every payment, return, cheque and advance.
+       Stock and money are derived from those records, so removing them puts the stock back and
+       reverses the money without a separate step. Only a super admin may do this. */
+    case 'deleteParty': {
+      const me = sessionUser(d);
+      if (!me || !isSuper(me) || !isActiveUser(me)) {
+        throw new Error('Only a super admin can permanently delete a party.');
+      }
+      const party = d.parties.find((x) => x.id === payload.id);
+      if (!party) throw new Error('Party not found');
+
+      const plan = partyDeletePlan(party.id, d);
+      const pay = new Set(plan.payments.map((x) => x.id));
+      const chq = new Set(plan.cheques.map((x) => x.id));
+      const adv = new Set(plan.advances.map((x) => x.id));
+      const so = new Set(plan.setOffs.map((x) => x.id));
+
+      d.billItems = d.billItems.filter((x) => !plan.billIds.has(x.billId));
+      d.returns = d.returns.filter((x) => !plan.billIds.has(x.billId));
+      d.payments = d.payments.filter((x) => !pay.has(x.id));
+      d.cheques = d.cheques.filter((x) => !chq.has(x.id));
+      d.partyAdvances = d.partyAdvances.filter((x) => !adv.has(x.id));
+      d.partyItemPrices = d.partyItemPrices.filter((x) => x.partyId !== party.id);
+      d.bills = d.bills.filter((x) => !plan.billIds.has(x.id));
+      d.supplierPayments = d.supplierPayments.filter((x) => !so.has(x.id));
+      d.partyLedgerLinks = d.partyLedgerLinks.filter((x) => x.partyId !== party.id);
+      // Their buying side is a supplier in its own right: it stays, no longer tied to a party.
+      d.suppliers.forEach((s) => { if (s.partyId === party.id) s.partyId = ''; });
+      d.parties = d.parties.filter((x) => x.id !== party.id);
+
+      logActivity(d, 'party', party.id, 'delete',
+        `Permanently deleted party "${party.name}" with ${plan.bills.length} bill(s), `
+        + `${plan.payments.length} payment(s) (${plan.paid} paid), ${plan.returns.length} return(s); `
+        + `${plan.restocked} item quantity put back in stock`, party, null);
+      save();
+      return {
+        ok: true, bills: plan.bills.length, payments: plan.payments.length, paid: plan.paid,
+        returns: plan.returns.length, restocked: plan.restocked,
+      };
     }
 
     /* ---------------- Items ---------------- */
@@ -2396,8 +2447,74 @@ export function applyBillNoChanges(changes = []) {
   if (dirty) save();
 }
 
+/* ------------------------------------------------------------------ */
+/* Shadow copy — instant saves while the Google Sheet is the database   */
+/* ------------------------------------------------------------------ */
+//
+// With the Sheet as the database every save is a round trip to Google that
+// takes seconds. To make saving feel instant, a save is first rehearsed here,
+// on a working copy of the Sheet's data (the "shadow"), using exactly the same
+// rules this adapter always follows. The screen updates at once and the real
+// save goes to the Sheet in the background (see api.js). The shadow is
+// refilled from the Sheet whenever nothing is waiting to be sent, so it can
+// never drift for long.
+
+/** Use the working copy's own storage slot. Called once, when the Sheet is in use. */
+export function useShadowStore() { dbKey = SHADOW_KEY; }
+
+/** Highest bill number already used, per year — what the Sheet's own counter is at. */
+function billCounters(bills) {
+  const out = {};
+  (bills || []).forEach((b) => {
+    const m = /^(\d{4})-(\d+)$/.exec(String(b?.billNo || ''));
+    if (m) out[m[1]] = Math.max(out[m[1]] || 0, Number(m[2]));
+  });
+  return out;
+}
+
+/** Replace the working copy with what the Sheet just returned. */
+export function seedShadow(data) {
+  const run = _chain.then(() => {
+    const { me, methods, users, ...rest } = data || {};
+    const d = { ...emptyDb(), ...rest };
+    d.users = [];
+    d.sync = { touched: {}, lastPushAt: '', lastPullAt: '' };
+    d.billCounter = billCounters(d.bills);
+    d.settings = { ...emptyDb().settings, ...(rest.settings || {}) };
+    ensureAdmin(d);
+    write(d);
+    return true;
+  });
+  _chain = run.catch(() => {});
+  return run;
+}
+
+/**
+ * Same as handle(), but also reports the ids the action made, in order, so the
+ * real save can reuse them. Runs in the same one-at-a-time chain.
+ */
+export function handleCapturing(action, payload = {}) {
+  const ids = [];
+  const run = _chain.then(async () => {
+    captureIds(ids);
+    try { return await perform(action, payload); } finally { captureIds(null); }
+  });
+  _chain = run.catch(() => {});
+  return run.then((result) => ({ result, ids }));
+}
+
+/** Forget the working copy (sign-out with nothing waiting to be sent). */
+export function clearShadow() {
+  try { localStorage.removeItem(SHADOW_KEY); } catch { /* ignore */ }
+}
+
+export function hasShadow() {
+  try { return Boolean(localStorage.getItem(SHADOW_KEY)); } catch { return false; }
+}
+
 /** Wipe local data (Settings → reset). */
 export function resetLocal() {
+  localStorage.removeItem(SHADOW_KEY);
   localStorage.removeItem(DB_KEY);
   localStorage.removeItem('ewd_pending_sync');
   // Sync state describes records that no longer exist. Left behind, the next

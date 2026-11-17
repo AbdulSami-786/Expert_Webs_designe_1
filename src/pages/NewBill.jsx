@@ -1350,6 +1350,7 @@ export default function NewBill() {
                       </div>
                     </div>
                     {installPlan ? (
+                      <div className="table-wrap">
                       <table className="tbl mt-1">
                         <thead><tr><th>#</th><th>Due</th><th className="r">Amount</th></tr></thead>
                         <tbody>
@@ -1360,7 +1361,7 @@ export default function NewBill() {
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </table></div>
                     ) : (
                       <div className="small muted mt-1">Enter at least 2 instalments and the first due date.</div>
                     )}
@@ -1456,6 +1457,7 @@ export default function NewBill() {
              onClose={() => setHistoryFor(null)}>
         <div className="small muted mb-2">Prices charged to {party?.name} for this item.</div>
         {historyFor && priceHistory(partyId, historyFor).length ? (
+          <div className="table-wrap">
           <table className="tbl">
             <thead><tr><th>Date</th><th>Unit</th><th className="r">Price</th></tr></thead>
             <tbody>
@@ -1467,7 +1469,7 @@ export default function NewBill() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         ) : (
           <Empty title="No price history" message="This is the first time this party is buying this item." />
         )}

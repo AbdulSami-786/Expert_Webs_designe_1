@@ -466,6 +466,7 @@ export default function BillView() {
             const label = { paid: 'Paid', overdue: 'Overdue', soon: 'Due soon', upcoming: 'Upcoming' };
             return (
               <Card title="Instalments" subtitle="Payments on this bill cover them in order" tight>
+                <div className="table-wrap">
                 <table className="tbl">
                   <thead><tr><th>#</th><th>Due</th><th className="r">Amount</th><th className="r">Left</th><th>Status</th></tr></thead>
                   <tbody>
@@ -479,7 +480,7 @@ export default function BillView() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </Card>
             );
           })()}

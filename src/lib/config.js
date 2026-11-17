@@ -22,13 +22,14 @@ export const IS_DESKTOP =
   typeof navigator !== 'undefined' && /\bElectron\//.test(navigator.userAgent || '');
 
 // Your deployed Apps Script Web App URL (the Google Sheet backend).
-// Deployment of Code.gs v1.4.0 (refunds, supplier on bill lines, instalments, old-data import).
-// Open this link in a browser: it must show "version":"1.4.0" and list addRefund.
-// Earlier deployments, kept for rolling back (they run OLDER code and do not know refunds):
+// Deployment of Code.gs v1.5.0 (instant saving ids, faster writes, permanent party delete).
+// Open this link in a browser: it must show "version":"1.5.0" and list deleteParty and idHints.
+// Earlier deployments, kept for rolling back (they run OLDER code and do not know deleteParty):
+//   https://script.google.com/macros/s/AKfycbynv7p7HlcuKi5eICecgqUzGPHCfME1_Ku7rK_xXxWhWOPkMp2i8I3Fzc326u2J_OIUzQ/exec   (v1.4.0)
 //   https://script.google.com/macros/s/AKfycbxjiF2Cbu3XRXkWHG6ZJDcdDZ1KkrOF-vuf0R7mR8vF1Y1C9SWTGzGw7gce4aYTKVYrEA/exec
 //   https://script.google.com/macros/s/AKfycbyPkrSO3jOpm8gxqGEI9-IHsdvkJDktnQGnsnPBM1EyDmdzsy7nrTLV1krhyeoBG1Ua/exec
 const SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbynv7p7HlcuKi5eICecgqUzGPHCfME1_Ku7rK_xXxWhWOPkMp2i8I3Fzc326u2J_OIUzQ/exec';
+  'https://script.google.com/macros/s/AKfycbx1-SrwaxYgsUrlIVxf19yhXQERuZ-ZA9oX2l9HQ6OVLM4QKcyLjZWLildIHJy1cAgmGA/exec';
 
 // Google Sheets sync login. Leave both empty to keep offline-first sync off.
 // Anything written here is compiled into the program, so anyone who has the

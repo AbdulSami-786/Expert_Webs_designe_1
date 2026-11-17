@@ -52,6 +52,7 @@ export default function BalanceSheet() {
 
   const Section = ({ title, rows, total, totalLabel, tone }) => (
     <Card title={title} tight>
+      <div className="table-wrap">
       <table className="tbl">
         <tbody>
           {rows.map((x) => (
@@ -70,7 +71,7 @@ export default function BalanceSheet() {
             <td className="r" style={{ fontSize: 15, color: tone }}>{money(total)}</td>
           </tr>
         </tfoot>
-      </table>
+      </table></div>
     </Card>
   );
 
@@ -96,6 +97,7 @@ export default function BalanceSheet() {
       </div>
 
       <Card title="Cash & Bank Breakdown" tight className="mt-2">
+        <div className="table-wrap">
         <table className="tbl">
           <thead>
             <tr><th>Payment method</th><th className="r">Balance</th></tr>
@@ -118,7 +120,7 @@ export default function BalanceSheet() {
               <td className="r">{money(r2(sheet.balances.reduce((s, b) => s + b.balance, 0)))}</td>
             </tr>
           </tfoot>
-        </table>
+        </table></div>
       </Card>
 
       <div style={{

@@ -168,8 +168,17 @@ export function shareLink(token) {
 }
 
 /** Short id generator for client-side records. */
+// While a save is being rehearsed on the local copy (see optimistic saving in
+// api.js), every id it makes is noted here, in order. Those ids are then sent
+// with the real save so the Sheet records the SAME ids, and what the screen
+// already shows stays valid once the Sheet has caught up.
+let idSink = null;
+export function captureIds(sink) { idSink = sink; }
+
 export function uid(prefix = 'id') {
-  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  const id = `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  if (idSink) idSink.push(id);
+  return id;
 }
 
 export function titleCase(s) {

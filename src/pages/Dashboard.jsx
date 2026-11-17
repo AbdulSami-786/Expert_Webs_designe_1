@@ -292,6 +292,7 @@ export default function Dashboard() {
           </Card>
 
           <Card title="Aging Summary" tight>
+            <div className="table-wrap">
             <table className="tbl">
               <tbody>
                 {Object.entries(aging).map(([bucket, amt]) => {
@@ -319,7 +320,7 @@ export default function Dashboard() {
                   <td className="r"><Money value={stats.outstanding} /></td>
                 </tr>
               </tfoot>
-            </table>
+            </table></div>
           </Card>
         </div>
 

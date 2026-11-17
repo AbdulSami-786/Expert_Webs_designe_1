@@ -33,6 +33,7 @@ import PartyItemSearchModal from '../components/forms/PartyItemSearchModal';
 import ReturnModal from '../components/forms/ReturnModal';
 import RefundModal from '../components/forms/RefundModal';
 import PurchaseBillModal from '../components/forms/PurchaseBillModal';
+import DeletePartyModal from '../components/forms/DeletePartyModal';
 import SupplierPaymentModal from '../components/forms/SupplierPaymentModal';
 import BillReceiptModal from '../components/BillReceiptModal';
 import {
@@ -73,7 +74,7 @@ export default function PartyLedger() {
 function PartyLedgerView({ onRelock }) {
   const { id } = useParams();
   const nav = useNavigate();
-  const { data, settings, methods, mutate, toast } = useApp();
+  const { data, settings, methods, mutate, toast, isAdmin } = useApp();
 
   const [lockOpen, setLockOpen] = useState(false);
   const [payFor, setPayFor] = useState(null);
@@ -109,6 +110,7 @@ function PartyLedgerView({ onRelock }) {
   // Their selling side: buying from them, paying them, and setting one side
   // of the khata off against the other.
   const [buyOpen, setBuyOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [payThemOpen, setPayThemOpen] = useState(false);
   const [setOffOpen, setSetOffOpen] = useState(false);
   const [delSupPayFor, setDelSupPayFor] = useState(null);
@@ -343,6 +345,10 @@ function PartyLedgerView({ onRelock }) {
         <Button variant="primary" icon={HandCoins}
                 onClick={() => setAccountPayOpen(true)}>Payment</Button>
         <Button variant="primary" icon={Plus} onClick={() => nav('/bill/new')}>New Bill</Button>
+        {isAdmin && (
+          <Button variant="danger" icon={Trash2} onClick={() => setDeleteOpen(true)}
+                  title="Delete this party and all their bills for good">Delete Party</Button>
+        )}
       </PageHead>
 
       {/* Summary */}
@@ -1063,6 +1069,9 @@ function PartyLedgerView({ onRelock }) {
         open={Boolean(returnFor)} onClose={() => setReturnFor(null)}
         bill={returnFor} party={party}
       />
+
+      <DeletePartyModal open={deleteOpen} party={party} onClose={() => setDeleteOpen(false)}
+                        onDeleted={() => nav('/parties')} />
 
       <RefundModal
         open={Boolean(refundFor)} onClose={() => setRefundFor(null)}

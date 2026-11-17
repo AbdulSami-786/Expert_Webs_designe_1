@@ -137,6 +137,7 @@ export default function Expenses() {
 
         <Card title="By Category" tight>
           {byCategory.length ? (
+            <div className="table-wrap">
             <table className="tbl">
               <tbody>
                 {byCategory.map(([cat, amt]) => (
@@ -157,7 +158,7 @@ export default function Expenses() {
               <tfoot>
                 <tr><td colSpan={2}>Total</td><td className="r">{money(total)}</td></tr>
               </tfoot>
-            </table>
+            </table></div>
           ) : (
             <Empty title="Nothing to summarise" message="Add an expense to see the breakdown." />
           )}

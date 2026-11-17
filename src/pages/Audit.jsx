@@ -121,6 +121,7 @@ export default function Audit() {
       <div className="grid-2">
         <Card title="Financial Summary" tight
               subtitle={prevSummary ? 'Compared with the previous period of the same length' : undefined}>
+          <div className="table-wrap">
           <table className="tbl">
             <thead>
               <tr>
@@ -158,11 +159,12 @@ export default function Audit() {
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         </Card>
 
         <div className="col">
           <Card title="Position Right Now" tight>
+            <div className="table-wrap">
             <table className="tbl">
               <tbody>
                 <tr>
@@ -182,10 +184,11 @@ export default function Audit() {
                   <td className="r strong"><span className="money pos">{money(cashInHand)}</span></td>
                 </tr>
               </tbody>
-            </table>
+            </table></div>
           </Card>
 
           <Card title="Balance by Method" tight>
+            <div className="table-wrap">
             <table className="tbl">
               <tbody>
                 {balances.map((b) => (
@@ -198,7 +201,7 @@ export default function Audit() {
               <tfoot>
                 <tr><td>Total</td><td className="r">{money(cashInHand)}</td></tr>
               </tfoot>
-            </table>
+            </table></div>
           </Card>
         </div>
       </div>

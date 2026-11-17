@@ -131,6 +131,7 @@ export default function StockLoss() {
 
         <Card title="By Reason" tight>
           {byReason.length ? (
+            <div className="table-wrap">
             <table className="tbl">
               <tbody>
                 {byReason.map(([reason, amt]) => (
@@ -143,7 +144,7 @@ export default function StockLoss() {
               <tfoot>
                 <tr><td>Total</td><td className="r">{money(totals.value)}</td></tr>
               </tfoot>
-            </table>
+            </table></div>
           ) : (
             <Empty title="Nothing logged" message="Entries will be summarised here." />
           )}

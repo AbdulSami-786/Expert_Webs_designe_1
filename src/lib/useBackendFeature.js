@@ -11,6 +11,7 @@ import api from './api';
 const PROBES = {
   addRefund: () => api.addRefund({}),
   adoptPurchases: () => api.adoptPurchases({}),
+  deleteParty: () => api.deleteParty(''),
 };
 
 // 'ok' | 'old'. An outage is not remembered: it says nothing about the script.

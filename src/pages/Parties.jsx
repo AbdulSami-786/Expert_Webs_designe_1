@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Plus, Users, Pencil, Archive, ArchiveRestore, Phone, Send, ChevronRight, Lock,
+  Plus, Users, Pencil, Archive, ArchiveRestore, Phone, Send, ChevronRight, Lock, Trash2,
 } from 'lucide-react';
 import { canOpen, isLocked } from '../lib/partyLock';
 import { useApp } from '../context/AppContext';
@@ -12,17 +12,19 @@ import {
   Card, Button, Modal, Empty, PageHead, SearchBar, Money, Pill, Confirm,
 } from '../components/ui';
 import PartyForm from '../components/forms/PartyForm';
+import DeletePartyModal from '../components/forms/DeletePartyModal';
 import { deriveBills, partyDue, partyUnappliedCredit, partyAdvanceBalance, linkedSupplier, supplierBalance } from '../lib/calc';
 import { money, norm, waLink, r2 } from '../lib/format';
 
 export default function Parties() {
-  const { data, settings, mutate } = useApp();
+  const { data, settings, mutate, isAdmin } = useApp();
   const nav = useNavigate();
   const [q, setQ] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(null);
+  const [deleting, setDeleting] = useState(null);
 
   const derived = useMemo(() => deriveBills(data.bills, data), [data]);
 
@@ -147,6 +149,13 @@ export default function Parties() {
                                   onClick={() => setConfirmArchive(p)}>
                             {p.status === 'archived' ? <ArchiveRestore size={14} /> : <Archive size={14} />}
                           </button>
+                          {isAdmin && !p.hidden && (
+                            <button className="btn btn-ghost btn-sm" title="Delete permanently"
+                                    style={{ color: 'var(--danger)' }}
+                                    onClick={() => setDeleting(p)}>
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -191,6 +200,8 @@ export default function Parties() {
           <PartyForm party={editing} onSaved={() => setEditing(null)} onCancel={() => setEditing(null)} />
         )}
       </Modal>
+
+      <DeletePartyModal open={Boolean(deleting)} party={deleting} onClose={() => setDeleting(null)} />
 
       <Confirm
         open={Boolean(confirmArchive)}
