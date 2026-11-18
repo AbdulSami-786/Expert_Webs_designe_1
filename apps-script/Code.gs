@@ -157,8 +157,8 @@ var BOOLEAN = { reversed: 1, restock: 1, active: 1, isAdvance: 1 };
  * missing, the link is still serving an old deployment (saving Code.gs is not enough: it needs
  * Deploy > Manage deployments > pencil > Version: New version > Deploy).
  */
-var BACKEND_VERSION = '1.5.0';
-var BACKEND_FEATURES = ['adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries'];
+var BACKEND_VERSION = '1.5.2';
+var BACKEND_FEATURES = ['adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier'];
 
 function doGet(e) {
   return json({
@@ -362,6 +362,7 @@ function route(action, p, token) {
     case 'addSupplierReturn':     return addSupplierReturn(p);
     case 'deleteSupplierReturn':  return deleteSupplierReturn(p);
     case 'linkPartySupplier':     return linkPartySupplier(p);
+    case 'unlinkPartySupplier':   return unlinkPartySupplier(p);
     case 'setOffParty':           return setOffParty(p);
 
     case 'saveEmployee':     return saveEmployee(p);
@@ -3815,6 +3816,27 @@ function linkPartySupplier(p) {
     appendRow('Suppliers', rec);
     logActivity('supplier', rec.id, 'create', 'Party "' + party.name + '" set up as a supplier');
     return rec;
+  });
+}
+
+/**
+ * Undo linkPartySupplier: the supplier and the party become two separate
+ * accounts again. Nothing is deleted. Mirrors unlinkPartySupplier in
+ * src/lib/localAdapter.js.
+ */
+function unlinkPartySupplier(p) {
+  return withLock(function () {
+    var sup = getById('Suppliers', p.supplierId);
+    if (!sup) fail('Supplier not found');
+    if (sup.partyId) {
+      var party = getById('Parties', sup.partyId);
+      updateRow('Suppliers', sup._row, { partyId: '' });
+      logActivity('supplier', sup.id, 'edit',
+        'Disconnected supplier "' + sup.name + '" from party "' + (party ? party.name : '') + '"');
+    }
+    var out = getById('Suppliers', sup.id);
+    delete out._row;
+    return out;
   });
 }
 

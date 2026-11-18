@@ -16,7 +16,7 @@ import {
   Plus, Download, Share2, Wallet, Send, Phone, Receipt, RotateCcw,
   Pencil, Ban, Copy, Trash2, MoreVertical, Printer, CheckCircle2,
   ChevronRight, ChevronDown, Package, ListOrdered, LayoutList, HandCoins, Search,
-  Lock, KeyRound, ShoppingCart, ArrowLeftRight, Banknote, XCircle,
+  Lock, KeyRound, ShoppingCart, ArrowLeftRight, Banknote, XCircle, Unlink,
 } from 'lucide-react';
 import { PartyLockScreen, PartyLockModal } from '../components/PartyLock';
 import { isLocked, isUnlocked, canOpen, relock } from '../lib/partyLock';
@@ -113,6 +113,7 @@ function PartyLedgerView({ onRelock }) {
   // of the khata off against the other.
   const [buyOpen, setBuyOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
   const [delReturnId, setDelReturnId] = useState(null);
   // A cheque about to be marked cleared or bounced: { id, newStatus }
   const [chqAction, setChqAction] = useState(null);
@@ -341,6 +342,10 @@ function PartyLedgerView({ onRelock }) {
         <Button icon={Wallet} onClick={() => setAdvanceOpen(true)}>Add Advance</Button>
         <Button icon={ShoppingCart} onClick={onBuy} loading={linking}
                 title="Record goods you bought from this party">Buy from Party</Button>
+        {supplier && (
+          <Button icon={Unlink} onClick={() => setUnlinkOpen(true)}
+                  title="Separate this party from their supplier account">Disconnect</Button>
+        )}
         {supplier && (
           <Button icon={Send} onClick={() => setPayThemOpen(true)}
                   title="Record money you paid this party for goods bought">Pay Party</Button>
@@ -1013,6 +1018,21 @@ function PartyLedgerView({ onRelock }) {
           const target = delPayFor;
           setDelPayFor(null);
           await mutate(() => api.deletePayment(target), 'Payment deleted').catch(() => {});
+        }}
+      />
+
+      <Confirm
+        open={unlinkOpen}
+        title="Disconnect from supplier?"
+        confirmLabel="Disconnect"
+        message={`${party.name} will no longer be linked to supplier "${supplier?.name || ''}". `
+          + 'Nothing is deleted — all bills, purchases and payments stay. The two accounts '
+          + 'just stop being netted together, and you can link them again any time.'}
+        onCancel={() => setUnlinkOpen(false)}
+        onConfirm={async () => {
+          const s = supplier;
+          setUnlinkOpen(false);
+          if (s) await mutate(() => api.unlinkPartySupplier(s.id), 'Disconnected').catch(() => {});
         }}
       />
 

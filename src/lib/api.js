@@ -601,6 +601,7 @@ export const api = {
   // A party who also sells to the shop: their supplier side, and settling
   // one side of their khata against the other without cash changing hands.
   linkPartySupplier:     (partyId, supplierId) => call('linkPartySupplier', { partyId, supplierId }),
+  unlinkPartySupplier:   (supplierId) => call('unlinkPartySupplier', { supplierId }),
   setOffParty:           (s)          => call('setOffParty', s),
 
   // Employees

@@ -22,18 +22,19 @@ export const IS_DESKTOP =
   typeof navigator !== 'undefined' && /\bElectron\//.test(navigator.userAgent || '');
 
 // Your deployed Apps Script Web App URL (the Google Sheet backend).
-// Deployment of Code.gs v1.5.0 (instant saving ids, faster writes, delete party / bill / return, remove entries
-// by date, bill edits that respect returns).
-// Open this link in a browser: it must show "version":"1.5.0" and list deleteParty, deleteBill, deleteReturn,
-// purgeEntries and idHints.
+// Deployment of Code.gs v1.5.2 (adds unlinkPartySupplier — the Disconnect button — on top of v1.5.0's
+// instant saving ids, faster writes, delete party / bill / return, remove entries by date).
+// Open this link in a browser: it must list unlinkPartySupplier along with deleteParty, deleteBill,
+// deleteReturn, purgeEntries and idHints.
 // Earlier deployments, kept for rolling back (they run OLDER code and do not know the newest actions):
+//   https://script.google.com/macros/s/AKfycbxgC26O_m2ftElbBpPAiUVQA-G226cojZ4bTUm4a55eybcEqt78SF5-dGFZcZMKYDMXEA/exec   (v1.5.0, before unlinkPartySupplier)
 //   https://script.google.com/macros/s/AKfycbw2oYS6lMC6Bh9vlpLqZG7cwJGPYPZUSBJy-CIUtGS_doUpecxUzXh701CAtvZQUlJOoA/exec   (v1.5.0, before deleteBill / purgeEntries)
 //   https://script.google.com/macros/s/AKfycbx1-SrwaxYgsUrlIVxf19yhXQERuZ-ZA9oX2l9HQ6OVLM4QKcyLjZWLildIHJy1cAgmGA/exec   (v1.5.0, before deleteReturn)
 //   https://script.google.com/macros/s/AKfycbynv7p7HlcuKi5eICecgqUzGPHCfME1_Ku7rK_xXxWhWOPkMp2i8I3Fzc326u2J_OIUzQ/exec   (v1.4.0)
 //   https://script.google.com/macros/s/AKfycbxjiF2Cbu3XRXkWHG6ZJDcdDZ1KkrOF-vuf0R7mR8vF1Y1C9SWTGzGw7gce4aYTKVYrEA/exec
 //   https://script.google.com/macros/s/AKfycbyPkrSO3jOpm8gxqGEI9-IHsdvkJDktnQGnsnPBM1EyDmdzsy7nrTLV1krhyeoBG1Ua/exec
 const SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbxgC26O_m2ftElbBpPAiUVQA-G226cojZ4bTUm4a55eybcEqt78SF5-dGFZcZMKYDMXEA/exec';
+  'https://script.google.com/macros/s/AKfycby_hMkFV34qjgjsbqGg9tY1M3Fl0wvzMs3lFkW8uAtUrPapK9NZ0phi9Lh9bOeZgs64Aw/exec';
 
 // Google Sheets sync login. Leave both empty to keep offline-first sync off.
 // Anything written here is compiled into the program, so anyone who has the

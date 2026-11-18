@@ -1,7 +1,7 @@
 {
   "name": "expert-webs-designs-dashboard",
   "private": true,
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Expert Webs Designs — business dashboard (billing, parties, stock, accounts)",
   "author": "Expert Webs Designs",
   "type": "module",
@@ -44,7 +44,10 @@
       "package.json"
     ],
     "win": {
-      "target": ["nsis", "zip"],
+      "target": [
+        "nsis",
+        "zip"
+      ],
       "icon": "build/icon.ico"
     },
     "nsis": {

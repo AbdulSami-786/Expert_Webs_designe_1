@@ -5,7 +5,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, ShoppingCart, Wallet, Undo2, Pencil, Download, Printer, Trash2, Ban, Truck, Phone,
-  HandCoins, ListChecks, Receipt, Link2, Package, ChevronRight, ChevronDown,
+  HandCoins, ListChecks, Receipt, Link2, Unlink, Package, ChevronRight, ChevronDown,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
@@ -48,6 +48,7 @@ export default function SupplierLedger() {
   const [tab, setTab] = useState('all');             // which kind of entry the ledger shows
   const [linkTo, setLinkTo] = useState('');          // party chosen in the link bar
   const [busy, setBusy] = useState(false);
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false); // money in from them as a customer
 
   const supplier = data.suppliers.find((s) => s.id === id);
@@ -273,6 +274,10 @@ export default function SupplierLedger() {
           <Button icon={HandCoins} onClick={() => nav(`/party/${supplier.partyId}`)}>
             Party Ledger (net)
           </Button>
+        )}
+        {linkedParty && (
+          <Button icon={Unlink} onClick={() => setUnlinkOpen(true)}
+                  title="Separate this supplier from their party account">Disconnect</Button>
         )}
         <Button icon={Pencil} onClick={() => setDialog('edit')}>Edit</Button>
         <Button icon={Download} onClick={onExcel}>Excel</Button>
@@ -687,6 +692,20 @@ export default function SupplierLedger() {
                              changes.map((c) => ({ id: c.id, receivedQty: c.qty }))),
                            'Receiving updated',
                          )} />
+      <Confirm
+        open={unlinkOpen}
+        title="Disconnect from party?"
+        confirmLabel="Disconnect"
+        message={`${supplier.name} will no longer be linked to party "${linkedParty?.name || ''}". `
+          + 'Nothing is deleted — all bills, purchases and payments stay. The two accounts '
+          + 'just stop being netted together, and you can link them again any time.'}
+        onCancel={() => setUnlinkOpen(false)}
+        onConfirm={async () => {
+          setUnlinkOpen(false);
+          await mutate(() => api.unlinkPartySupplier(supplier.id), 'Disconnected').catch(() => {});
+        }}
+      />
+
       <Confirm
         open={Boolean(deleteLine)}
         danger

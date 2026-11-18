@@ -1984,6 +1984,21 @@ async function perform(action, payload = {}) {
       return rec;
     }
 
+    /* Undo linkPartySupplier: the supplier and the party become two separate
+       accounts again. Nothing is deleted — bills, purchases and payments all
+       stay where they are; only the netted view between them goes away. */
+    case 'unlinkPartySupplier': {
+      const sup = d.suppliers.find((x) => x.id === payload.supplierId);
+      if (!sup) throw new Error('Supplier not found');
+      if (!sup.partyId) return sup;
+      const party = d.parties.find((x) => x.id === sup.partyId);
+      sup.partyId = '';
+      logActivity(d, 'supplier', sup.id, 'edit',
+        `Disconnected supplier "${sup.name}" from party "${party?.name || ''}"`);
+      save();
+      return sup;
+    }
+
     /* Settle what a party owes on sales against what the shop owes them on
        purchases. No cash moves: the sale bills are paid oldest first with a
        'Set-off' payment, and the same amount is paid to their supplier side,
