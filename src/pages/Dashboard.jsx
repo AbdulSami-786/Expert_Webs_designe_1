@@ -189,7 +189,9 @@ export default function Dashboard() {
       {/* Mobile-only quick actions */}
       <div className="hide-mobile" style={{ display: 'none' }} />
       <div className="row hide-desktop mb-2" style={{ gap: 8 }}>
-        <Button icon={CalendarCheck} onClick={() => setCloseToday(true)} style={{ flex: 1 }}>Close Today</Button>
+        {isAdmin && (
+          <Button icon={CalendarCheck} onClick={() => setCloseToday(true)} style={{ flex: 1 }}>Close Today</Button>
+        )}
         {isAdmin && (
           <Button icon={Download} onClick={() => { downloadBackup(data, settings.shopName); toast('Backup downloaded'); }} style={{ flex: 1 }}>
             Backup
@@ -468,7 +470,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />
+      {isAdmin && <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />}
     </>
   );
 }

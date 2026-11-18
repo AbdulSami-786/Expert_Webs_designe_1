@@ -1060,42 +1060,98 @@ export function ledgerBook(data, partyId = null, from = null, to = null) {
     const x = new Date(d);
     return (!from || x >= new Date(from)) && (!to || x <= new Date(to + 'T23:59:59'));
   };
+  const day = (v) => String(v || '').slice(0, 10);
   const pname = (id) => parties.find((p) => p.id === id)?.name || 'Unknown';
+  const billById = new Map(bills.map((b) => [b.id, b]));
 
+  // Every entry is listed, including the ones that were cancelled afterwards: a voided bill, a
+  // reversed payment, and the goods and money that came back. A cancelled entry is followed by its own
+  // offsetting line instead of vanishing, so the book still adds up and nothing disappears from view.
+  // `phase` only orders entries that fall on the same day (sale, then what was paid, returned, ...).
   const rows = [];
+  const add = (phase, rw) => rows.push({ phase, ...rw });
+
+  // what each bill's returns came to, so a voided bill takes back only what is still on it
+  const returnedOf = new Map();
+  returns.forEach((rt) => returnedOf.set(rt.billId, r2((returnedOf.get(rt.billId) || 0) + (Number(rt.valueAdjusted) || 0))));
 
   bills
-    .filter((b) => b.status !== 'voided' && (!partyId || b.partyId === partyId) && inRange(b.date))
-    .forEach((b) => rows.push({
-      date: b.date, ref: b.billNo, party: pname(b.partyId), partyId: b.partyId,
-      desc: `Sale — Bill ${b.billNo}`, debit: r2(b.totalAmount), credit: 0,
-    }));
+    .filter((b) => (!partyId || b.partyId === partyId))
+    .forEach((b) => {
+      const voided = b.status === 'voided';
+      if (inRange(b.date)) {
+        add(0, {
+          date: b.date, ref: b.billNo, party: pname(b.partyId), partyId: b.partyId,
+          desc: `Sale — Bill ${b.billNo}${voided ? ' (voided)' : ''}`, debit: r2(b.totalAmount), credit: 0,
+          kind: voided ? 'void' : '',
+        });
+      }
+      if (voided) {
+        const when = day(b.voidedAt) || day(b.date);
+        const left = r2(Math.max(0, r2(b.totalAmount) - (returnedOf.get(b.id) || 0)));
+        if (left > 0 && inRange(when)) {
+          add(5, {
+            date: when, ref: b.billNo, party: pname(b.partyId), partyId: b.partyId,
+            desc: `Bill ${b.billNo} voided${b.voidReason ? ` — ${b.voidReason}` : ''}`, debit: 0, credit: left,
+            kind: 'void',
+          });
+        }
+      }
+    });
 
   payments
     // Opening balances are a starting float, not money received from a party,
     // so they never appear as ledger entries.
-    .filter((p) => !p.reversed && !p.isOpening && (!partyId || p.partyId === partyId) && inRange(p.date))
-    .forEach((p) => rows.push({
-      date: p.date, ref: p.method, party: pname(p.partyId), partyId: p.partyId,
-      desc: `Payment received — ${p.method}`, debit: 0, credit: r2(p.amount),
-    }));
-
-  returns
-    .filter((rt) => inRange(rt.date))
-    .forEach((rt) => {
-      const bill = bills.find((b) => b.id === rt.billId);
-      if (!bill) return;
-      if (partyId && bill.partyId !== partyId) return;
-      rows.push({
-        date: rt.date, ref: bill.billNo, party: pname(bill.partyId), partyId: bill.partyId,
-        desc: `Return against Bill ${bill.billNo}`, debit: 0, credit: r2(rt.valueAdjusted),
-      });
+    .filter((p) => !p.isOpening && (!partyId || p.partyId === partyId))
+    .forEach((p) => {
+      if (inRange(p.date)) {
+        add(1, {
+          date: p.date, ref: p.method, party: pname(p.partyId), partyId: p.partyId,
+          desc: `Payment received — ${p.method}${p.reversed ? ' (reversed)' : ''}`, debit: 0, credit: r2(p.amount),
+          kind: p.reversed ? 'reversal' : '',
+        });
+      }
+      if (p.reversed) {
+        const when = day(p.reversedAt) || day(p.date);
+        if (inRange(when)) {
+          add(4, {
+            date: when, ref: p.method, party: pname(p.partyId), partyId: p.partyId,
+            desc: `Payment reversed — ${p.method}${p.reverseReason ? ` (${p.reverseReason})` : ''}`,
+            debit: r2(p.amount), credit: 0, kind: 'reversal',
+          });
+        }
+      }
     });
 
-  rows.sort((a, b) => new Date(a.date) - new Date(b.date));
+  returns.forEach((rt) => {
+    const bill = billById.get(rt.billId);
+    if (!bill) return;
+    if (partyId && bill.partyId !== partyId) return;
+    const item = (data.items || []).find((i) => i.id === rt.itemId);
+    if (inRange(rt.date)) {
+      add(2, {
+        date: rt.date, ref: bill.billNo, party: pname(bill.partyId), partyId: bill.partyId,
+        desc: `Return against Bill ${bill.billNo}${item ? ` — ${rt.qty} × ${item.name}` : ''}`,
+        debit: 0, credit: r2(rt.valueAdjusted),
+      });
+    }
+    // Money handed back for the returned goods is its own entry: the return payment.
+    const refund = r2(rt.refundAmount);
+    const when = day(rt.refundDate) || day(rt.date);
+    if (refund > 0 && inRange(when)) {
+      add(3, {
+        date: when, ref: bill.billNo, party: pname(bill.partyId), partyId: bill.partyId,
+        desc: `Refund paid — ${rt.refundMethod || 'Cash'} (return on Bill ${bill.billNo})`, debit: refund, credit: 0,
+      });
+    }
+  });
+
+  // Oldest first; entries on the same day keep their natural order (sale, payment, return, refund, then
+  // any cancellation), and Array.sort is stable so ties inside a phase keep the order they were added.
+  rows.sort((a, b) => new Date(a.date) - new Date(b.date) || a.phase - b.phase);
 
   let bal = 0;
-  return rows.map((rw) => {
+  return rows.map(({ phase, ...rw }) => {
     bal = r2(bal + rw.debit - rw.credit);
     return { ...rw, balance: bal };
   });
@@ -1443,6 +1499,8 @@ export function partyStatement(partyId, data = {}, from = null, to = null) {
           // without parsing them back out of the composite `id`.
           paymentId: p.id,
           chequeId: chq ? chq.id : null,
+          // pending / cleared / bounced, so the ledger can offer Clear and Bounce on the line
+          chequeStatus: chq ? chq.status : '',
           isAdvance: Boolean(p.isAdvance),
           // The advance this receipt records, so the statement can delete the
           // whole thing rather than refusing and sending the user elsewhere.
@@ -1522,16 +1580,17 @@ export function partyStatement(partyId, data = {}, from = null, to = null) {
   returns.forEach((rt) => {
     const bill = billById.get(rt.billId);
     if (!bill || !within(rt.date)) return;
-    // Money handed back the same day belongs on this line: it must not leave a "-Rs 10" showing
-    // for a moment on a return that was refunded on the spot. A later refund is its own line.
+    // The whole return value is the credit, and money handed back the same day is the debit on the
+    // SAME line, so the line shows both amounts yet the running balance never dips to "-Rs 10" on a
+    // return that was refunded on the spot. A later refund is its own line.
     const handed = (rt.refundDate || rt.date) === rt.date ? r2(rt.refundAmount) : 0;
     rows.push({
-      id: `ret-${rt.id}`, date: rt.date, type: 'return', billId: rt.billId,
+      id: `ret-${rt.id}`, date: rt.date, type: 'return', billId: rt.billId, returnId: rt.id,
       ref: bill.billNo,
       title: `Return against Bill ${bill.billNo}`,
       detail: `${itemName(rt.itemId)} × ${rt.qty}${rt.restock ? ' (restocked)' : ''}${rt.note ? ' · ' + rt.note : ''}`
         + (handed > 0 ? ` · ${money2(handed)} handed back (${rt.refundMethod || 'Cash'})` : ''),
-      method: handed > 0 ? (rt.refundMethod || 'Cash') : '', debit: 0, credit: r2(r2(rt.valueAdjusted) - handed),
+      method: handed > 0 ? (rt.refundMethod || 'Cash') : '', debit: handed, credit: r2(rt.valueAdjusted),
     });
   });
 
@@ -1832,6 +1891,161 @@ export function supplierStatement(supplierId, data = {}, from = null, to = null)
 /** The supplier record that is this party's buying side, if any. */
 export function linkedSupplier(partyId, suppliers = []) {
   return suppliers.find((s) => s.partyId && s.partyId === partyId) || null;
+}
+
+/**
+ * Every entry dated from `from` to `to` (both included, YYYY-MM-DD): what "remove all entries between two
+ * dates" would delete, and the few things that are not derived and must be given back explicitly.
+ *
+ * Sales: bills in the range go with everything on them (lines, payments, returns, cheques, whatever the
+ * date of those); payments, returns, advances and standalone cheques dated in the range go too, even on
+ * older bills (which then simply owe that money again). Purchases: purchase bills in the range with their
+ * lines, supplier payments and returns, plus loose purchase lines, supplier payments and returns dated in
+ * the range. Shop records: expenses, salaries/advances to staff, stock loss and assets in the range. People,
+ * items, suppliers and the Activity Log are never touched.
+ *
+ * Stock, cash/bank balances and what everyone owes are worked out from these records, so removing them is
+ * the reversal. Not derived: advance a removed bill used (given back to the party's advance), a set-off
+ * (its supplier-side half is taken back), and an item's cost price / last purchase date (refreshed).
+ */
+export function purgePlan(d, from, to) {
+  const day = (v) => String(v || '').slice(0, 10);
+  const within = (v) => { const x = day(v); return Boolean(x) && (!from || x >= from) && (!to || x <= to); };
+  const list = (k) => d[k] || [];
+
+  const bills = list('bills').filter((b) => within(b.date));
+  const billIds = new Set(bills.map((b) => b.id));
+
+  const advances = list('partyAdvances').filter((a) => within(a.dateReceived));
+  const advIds = new Set(advances.map((a) => a.id));
+
+  // payments: on a removed bill, or dated in the range
+  const payIds = new Set();
+  list('payments').forEach((p) => { if (billIds.has(p.billId) || within(p.date)) payIds.add(p.id); });
+  // what a removed advance had paid for (oldest payments first, as deleting an advance does)
+  advances.forEach((a) => {
+    let budget = r2(a.applied);
+    if (budget <= 0.004) return;
+    for (const p of list('payments')) {
+      if (budget <= 0.004) break;
+      if (p.partyId !== a.partyId || p.method !== 'Advance' || p.reversed || payIds.has(p.id)) continue;
+      payIds.add(p.id);
+      budget = r2(budget - r2(p.amount));
+    }
+  });
+  const payments = list('payments').filter((p) => payIds.has(p.id));
+
+  const returns = list('returns').filter((r) => billIds.has(r.billId) || within(r.date));
+  const cheques = list('cheques').filter((c) => billIds.has(c.billId)
+    || (c.paymentId && payIds.has(c.paymentId)) || (!c.paymentId && within(c.dateIssued)));
+  const prices = list('partyItemPrices').filter((x) => within(x.date));
+  const lines = list('billItems').filter((l) => billIds.has(l.billId));
+
+  // purchase side
+  const purchaseBills = list('purchaseBills').filter((b) => within(b.date));
+  const pbIds = new Set(purchaseBills.map((b) => b.id));
+  const purchases = list('purchases').filter((p) => (p.purchaseBillId ? pbIds.has(p.purchaseBillId) : within(p.date)));
+  const supplierPayments = list('supplierPayments').filter((s) => pbIds.has(s.purchaseBillId) || within(s.date));
+  const spIds = new Set(supplierPayments.map((s) => s.id));
+  const supplierReturns = list('supplierReturns').filter((s) => pbIds.has(s.purchaseBillId) || within(s.date));
+
+  // shop records (an expense and the stock loss it came from go together)
+  const lossIdsA = new Set(list('stockLoss').filter((l) => within(l.date)).map((l) => l.id));
+  const expIdsA = new Set(list('expenses').filter((e) => within(e.date)).map((e) => e.id));
+  const stockLoss = list('stockLoss').filter((l) => lossIdsA.has(l.id) || expIdsA.has(l.linkedExpenseId));
+  const lossIds = new Set(stockLoss.map((l) => l.id));
+  const expenses = list('expenses').filter((e) => expIdsA.has(e.id) || (e.linkedStockLossId && lossIds.has(e.linkedStockLossId)));
+  const employeeTx = list('employeeTx').filter((t) => within(t.date));
+  const assets = list('assets').filter((a) => within(a.date));
+
+  // advance that removed payments had drawn from advances that STAY goes back to them
+  const advBack = {};
+  const deletedApplied = {};
+  advances.forEach((a) => { deletedApplied[a.partyId] = r2((deletedApplied[a.partyId] || 0) + r2(a.applied)); });
+  payments.filter((p) => p.method === 'Advance' && !p.reversed).forEach((p) => {
+    advBack[p.partyId] = r2((advBack[p.partyId] || 0) + r2(p.amount));
+  });
+  Object.keys(advBack).forEach((pid) => {
+    advBack[pid] = r2(Math.max(0, advBack[pid] - (deletedApplied[pid] || 0)));
+    if (advBack[pid] <= 0.004) delete advBack[pid];
+  });
+
+  // set-offs: the supplier half is taken back (unless it is itself in the range)
+  const setOffs = [];
+  const taken = new Set();
+  payments.filter((p) => p.method === 'Set-off' && !p.reversed).forEach((p) => {
+    const bill = list('bills').find((b) => b.id === p.billId);
+    const partyId = p.partyId || bill?.partyId;
+    const sup = linkedSupplier(partyId, list('suppliers'));
+    if (!sup) return;
+    const amt = r2(p.amount);
+    const cands = list('supplierPayments').filter((sp) => !taken.has(sp.id) && !spIds.has(sp.id) && sp.supplierId === sup.id
+      && sp.method === 'Set-off' && day(sp.date) === day(p.date) && (sp.note || '') === (p.note || '') && r2(sp.amount) >= amt - 0.004);
+    const hit = cands.find((sp) => Math.abs(r2(sp.amount) - amt) < 0.005) || cands[0];
+    if (hit) { taken.add(hit.id); setOffs.push({ id: hit.id, amount: amt, whole: Math.abs(r2(hit.amount) - amt) < 0.005 }); }
+  });
+
+  const itemsToRefresh = [...new Set(purchases.map((p) => p.itemId))];
+  const sum = (arr, f) => r2(arr.reduce((s, x) => s + (Number(f(x)) || 0), 0));
+  return {
+    bills, lines, payments, returns, cheques, advances, prices,
+    purchaseBills, purchases, supplierPayments, supplierReturns,
+    expenses, stockLoss, employeeTx, assets,
+    advBack, setOffs, itemsToRefresh,
+    totals: {
+      sales: sum(bills, (b) => b.totalAmount),
+      payments: sum(payments.filter((p) => !p.reversed), (p) => p.amount),
+      purchases: sum(purchaseBills, (b) => b.totalAmount) + sum(purchases.filter((p) => !p.purchaseBillId), (p) => (Number(p.qty) || 0) * (Number(p.costPrice) || 0)),
+      expenses: sum(expenses, (e) => e.amount),
+    },
+    count: bills.length + payments.length + returns.length + cheques.length + advances.length
+      + purchaseBills.length + purchases.filter((p) => !p.purchaseBillId).length + supplierPayments.length
+      + supplierReturns.length + expenses.length + stockLoss.length + employeeTx.length + assets.length,
+  };
+}
+
+/**
+ * Everything that goes when ONE bill is deleted for good, and what that gives back.
+ * Stock and money are worked out from the records, so removing the bill's lines, payments and returns
+ * puts the stock back and reverses the money. Two things are not derived and need an explicit step:
+ * advance the bill had used (the party's advance balance has to be given back) and a set-off (the same
+ * amount was also paid to the party's supplier side).
+ */
+export function billDeletePlan(billId, d) {
+  const day = (v) => String(v || '').slice(0, 10);
+  const bill = (d.bills || []).find((b) => b.id === billId) || null;
+  if (!bill) return null;
+  const lines = (d.billItems || []).filter((l) => l.billId === billId);
+  const payments = (d.payments || []).filter((p) => p.billId === billId);
+  const payIds = new Set(payments.map((p) => p.id));
+  const returns = (d.returns || []).filter((r) => r.billId === billId);
+  const cheques = (d.cheques || []).filter((c) => c.billId === billId || (c.paymentId && payIds.has(c.paymentId)));
+
+  // advance this bill consumed: handed back to the party's advance balance
+  const advanceUsed = r2(payments.filter((p) => p.method === 'Advance' && !p.reversed)
+    .reduce((s, p) => s + (Number(p.amount) || 0), 0));
+
+  // set-off: the matching part of the supplier-side payment goes too
+  const supplier = linkedSupplier(bill.partyId, d.suppliers || []);
+  const setOffs = [];
+  if (supplier) {
+    const taken = new Set();
+    payments.filter((p) => p.method === 'Set-off' && !p.reversed).forEach((p) => {
+      const amt = r2(p.amount);
+      const cands = (d.supplierPayments || []).filter((sp) => !taken.has(sp.id) && sp.supplierId === supplier.id
+        && sp.method === 'Set-off' && day(sp.date) === day(p.date) && (sp.note || '') === (p.note || '')
+        && r2(sp.amount) >= amt - 0.004);
+      const hit = cands.find((sp) => Math.abs(r2(sp.amount) - amt) < 0.005) || cands[0];
+      if (hit) { taken.add(hit.id); setOffs.push({ id: hit.id, amount: amt, whole: Math.abs(r2(hit.amount) - amt) < 0.005 }); }
+    });
+  }
+
+  return {
+    bill, lines, payments, returns, cheques, advanceUsed, supplier, setOffs,
+    paid: r2(payments.filter((p) => !p.reversed && p.method !== 'Advance' && p.method !== 'Set-off').reduce((s, p) => s + (Number(p.amount) || 0), 0)),
+    refunded: r2(returns.reduce((s, r) => s + (Number(r.refundAmount) || 0), 0)),
+    restocked: lines.reduce((s, l) => s + (Number(l.qty) || 0), 0),
+  };
 }
 
 /**

@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  Plus, Trash2, History, Save, AlertTriangle, UserPlus, PackagePlus,
+  Plus, Minus, Trash2, History, Save, AlertTriangle, UserPlus, PackagePlus,
   Wallet, CreditCard, X, CalendarClock, Package,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -94,6 +94,54 @@ export default function NewBill() {
   // than by navigating to it — leaving the page would discard the other tabs.
   const [savedBillId, setSavedBillId] = useState(null);
 
+  /* Goods returned from this bill are not part of it any more, so the edit form does not show them.
+     Each item's returned quantity is taken off its lines (last line first). What was taken off is kept
+     aside as `hidden` lines and added back, unseen, when the bill is saved: the return records still
+     hold the refund and the stock, so the stored bill must still add up to the same gross for the
+     return to come off it. Everything the form shows and works out is therefore the bill AS IT STANDS
+     after the return. */
+  const editSplit = useMemo(() => {
+    if (!editingBill) return { visible: [], hidden: [], returnedValue: 0 };
+    const rets = data.returns.filter((r) => r.billId === editingBill.id);
+    const gone = new Map();                    // itemId -> { qty, value } returned
+    rets.forEach((r) => {
+      const c = gone.get(r.itemId) || { qty: 0, value: 0 };
+      c.qty += Number(r.qty) || 0;
+      c.value += Number(r.valueAdjusted) || 0;
+      gone.set(r.itemId, c);
+    });
+    const own = data.billItems.filter((bi) => bi.billId === editingBill.id);
+    const left = new Map([...gone].map(([id, c]) => [id, c.qty]));
+    const keep = own.map((bi) => ({ bi, qty: Number(bi.qty) || 0 }));
+    // take the returned quantity off, last line of the item first
+    for (let i = keep.length - 1; i >= 0; i -= 1) {
+      const need = left.get(keep[i].bi.itemId) || 0;
+      if (need <= 0) continue;
+      const take = Math.min(need, keep[i].qty);
+      keep[i].qty = r2(keep[i].qty - take);
+      left.set(keep[i].bi.itemId, r2(need - take));
+    }
+    const visible = keep.filter((k) => k.qty > 0.0001).map(({ bi, qty }) => ({
+      key: uid('l'), itemId: bi.itemId, qty: String(qty),
+      price: String(bi.price), unit: bi.unit, costPriceAtSale: bi.costPriceAtSale,
+      supplierId: bi.supplierId || '',
+    }));
+    // what was taken off, per item, priced so it adds back to exactly the value that was returned
+    const hidden = [];
+    gone.forEach((c, itemId) => {
+      const taken = r2(c.qty - (left.get(itemId) || 0));
+      if (taken <= 0.0001) return;
+      const line = own.find((bi) => bi.itemId === itemId);
+      hidden.push({
+        itemId, qty: taken, price: c.qty ? c.value / c.qty : Number(line?.price) || 0,
+        unit: line?.unit || 'Piece', costPriceAtSale: line?.costPriceAtSale ?? 0,
+        supplierId: line?.supplierId || '',
+      });
+    });
+    const returnedValue = r2(rets.reduce((s, r) => s + (Number(r.valueAdjusted) || 0), 0));
+    return { visible, hidden, returnedValue };
+  }, [editingBill, data.billItems, data.returns]);
+
   /* Load an existing bill when editing (FR-25) */
   useEffect(() => {
     if (!editingBill) return;
@@ -104,18 +152,10 @@ export default function NewBill() {
     setPending(editingBill.delivery === 'pending');
     const sids = [...new Set(data.billItems.filter((bi) => bi.billId === editingBill.id).map((bi) => bi.supplierId || ''))];
     setBillSupplier(sids.length === 1 ? sids[0] : '');
-    setLines(
-      data.billItems
-        .filter((bi) => bi.billId === editingBill.id)
-        .map((bi) => ({
-          key: uid('l'), itemId: bi.itemId, qty: String(bi.qty),
-          price: String(bi.price), unit: bi.unit, costPriceAtSale: bi.costPriceAtSale,
-          supplierId: bi.supplierId || '',
-        }))
-    );
+    setLines(editSplit.visible);
     // Existing payments stay attached to the bill; editing adjusts items/total.
     setPays([{ key: uid('p'), method: 'Cash', amount: '', cheque: null }]);
-  }, [editingBill, data.billItems]);
+  }, [editingBill, editSplit]);
 
   const party = activeParties.find((p) => p.id === partyId) || data.parties.find((p) => p.id === partyId);
 
@@ -123,23 +163,22 @@ export default function NewBill() {
      Where each item can be sold from. When editing, this bill's own lines are
      taken out first, so what it already sold counts as available again. */
   const stockData = useMemo(() => (editId
-    ? { ...data, billItems: data.billItems.filter((bi) => bi.billId !== editId) }
-    : data), [data, editId]);
+    ? {
+      ...data,
+      // The returned goods are kept as lines (they are still accounted for by the return records),
+      // so only what the form shows counts as available again.
+      billItems: [
+        ...data.billItems.filter((bi) => bi.billId !== editId),
+        ...editSplit.hidden.map((h, i) => ({ id: `__ret${i}`, billId: editId, ...h })),
+      ],
+    }
+    : data), [data, editId, editSplit]);
   const supStock = useMemo(() => stockBySupplier(stockData), [stockData]);
   const onHand = useMemo(() => {
     const m = new Map();
     activeItems.forEach((i) => m.set(i.id, itemStock(i.id, stockData)));
     return m;
   }, [activeItems, stockData]);
-  // Latest selling price per item (any party), for items the party has not bought yet.
-  const latestSale = useMemo(() => {
-    const m = new Map();
-    data.partyItemPrices.forEach((x) => {
-      const cur = m.get(x.itemId);
-      if (!cur || String(x.date) >= String(cur.date)) m.set(x.itemId, x);
-    });
-    return m;
-  }, [data.partyItemPrices]);
   /** A supplier is picked for the line when only one holds the item; else left on "any". */
   const defaultSupplier = (itemId) => {
     const list = supStock.get(itemId) || [];
@@ -342,6 +381,28 @@ export default function NewBill() {
     } else addLine(itemId);
   };
 
+  /** The line a tile (or the item list) acts on: the bill's chosen supplier's when it has one. */
+  const lineForItem = (itemId) => {
+    const mine = lines.filter((l) => l.itemId === itemId);
+    return mine.find((l) => billSupplier && l.supplierId === billSupplier) || mine[mine.length - 1] || null;
+  };
+
+  /** One less of a line; at zero the line comes off the bill. */
+  const stepDown = (line) => {
+    if (!line) return;
+    const next = r2((Number(line.qty) || 0) - 1);
+    if (next <= 0.0001) removeLine(line.key);
+    else setLine(line.key, { qty: String(next) });
+  };
+
+  /** One more of a line, never past what is in stock. */
+  const stepUp = (line) => {
+    const next = r2((Number(line.qty) || 0) + 1);
+    const max = maxQty(line);
+    if (next > max + 0.0001) { toast(limitMsg(line, max), 'error'); return; }
+    setLine(line.key, { qty: String(next) });
+  };
+
   const gridCategories = useMemo(
     () => [...new Set(activeItems.map((i) => i.category).filter(Boolean))].sort(),
     [activeItems],
@@ -396,6 +457,9 @@ export default function NewBill() {
     [lines]
   );
 
+  // The lines that actually have an item, for the list beside the payment.
+  const billLines = useMemo(() => lines.filter((l) => l.itemId), [lines]);
+
   const totals = useMemo(
     () => billTotals(
       validLines.map((l) => ({ qty: Number(l.qty), price: Number(l.price) })),
@@ -426,6 +490,15 @@ export default function NewBill() {
     const st = billState(editingBill, data);
     return r2(st.paid + st.pendingCheques);
   }, [editingBill, data]);
+  // Money handed back to the customer for goods they returned: it is no longer paid on this bill.
+  const refundedBack = useMemo(
+    () => (editingBill ? r2(billState(editingBill, data).refunded) : 0),
+    [editingBill, data]
+  );
+  const returnedNote = useMemo(() => editSplit.hidden.map((h) => {
+    const it = data.items.find((i) => i.id === h.itemId);
+    return `${h.qty} × ${it?.name || 'item'}`;
+  }), [editSplit, data.items]);
 
   // Anything not covered by a payment or advance automatically becomes Credit (FR-7)
   const creditAmount = useMemo(
@@ -625,6 +698,19 @@ export default function NewBill() {
 
   /* ---------------- Save ---------------- */
 
+  /** The lines as stored: what the form shows, plus the returned goods it left out (see editSplit). */
+  const withReturnedGoods = (shown) => {
+    if (!editingBill || !editSplit.hidden.length) return shown;
+    const out = shown.map((l) => ({ ...l }));
+    editSplit.hidden.forEach((h) => {
+      const same = out.find((l) => l.itemId === h.itemId && (l.supplierId || '') === (h.supplierId || '')
+        && l.unit === h.unit && Math.abs(Number(l.price) - h.price) < 1e-9);
+      if (same) same.qty = r2(same.qty + h.qty);
+      else out.push({ ...h });
+    });
+    return out;
+  };
+
   const doSave = async () => {
     if (busy) return; // guard: a second click must not save the bill twice
     if (!partyId) return toast('Select a party first', 'error');
@@ -644,10 +730,10 @@ export default function NewBill() {
         id: editingBill?.id,
         partyId,
         date,
-        lines: validLines.map((l) => ({
+        lines: withReturnedGoods(validLines.map((l) => ({
           itemId: l.itemId, qty: Number(l.qty), price: Number(l.price),
           unit: l.unit, costPriceAtSale: l.costPriceAtSale, supplierId: l.supplierId || '',
-        })),
+        }))),
         payments: pays
           .filter((p) => Number(p.amount) > 0)
           // Money handed over while editing an old bill is received today, not on the bill's date.
@@ -867,16 +953,21 @@ export default function NewBill() {
                     const held = billSupplier ? heldBy(i.id, billSupplier) : null;
                     const stockQty = billSupplier ? (held?.available ?? 0) : (onHand.get(i.id) ?? 0);
                     const sups = billSupplier ? (held ? [held] : []) : (supStock.get(i.id) || []);
-                    const pp = partyId ? lastPriceFor(partyId, i.id) : null;
-                    const price = pp?.price ?? latestSale.get(i.id)?.price;
+                    // Only the cost (buying) price is shown on a card: the supplier's own cost when the
+                    // bill sells from one, else the item's current cost.
+                    const cost = billSupplier && held?.cost !== undefined && held?.cost !== '' ? held.cost : i.costPrice;
                     const inBill = lines.filter((l) => l.itemId === i.id)
                       .reduce((t, l) => t + (Number(l.qty) || 0), 0);
                     const low = Number(i.lowStockAlert) > 0 && stockQty > 0 && stockQty <= Number(i.lowStockAlert);
                     const hue = tileHue(i.category || i.name);
                     return (
-                      <button key={i.id} type="button" onClick={() => addFromTile(i.id)}
-                              className={`item-tile ${inBill > 0 ? 'on' : ''} ${stockQty > 0 ? '' : 'out'}`}
-                              title={`Add ${i.name}`}>
+                      <div key={i.id} role="button" tabIndex={0} onClick={() => addFromTile(i.id)}
+                           onKeyDown={(e) => {
+                             if (e.target !== e.currentTarget) return;
+                             if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addFromTile(i.id); }
+                           }}
+                           className={`item-tile ${inBill > 0 ? 'on' : ''} ${stockQty > 0 ? '' : 'out'}`}
+                           title={`Add ${i.name}`}>
                         {inBill > 0 && <span className="inbill">× {inBill}</span>}
 
                         <span className="top">
@@ -892,10 +983,8 @@ export default function NewBill() {
                         <span className="nm">{i.name}</span>
 
                         <span className="pr">
-                          {price
-                            ? <><b>{money(price)}</b><small>/ {i.baseUnit}</small></>
-                            : <span className="cost">Cost {money(i.costPrice)}</span>}
-                          {pp && <span className="tag">{party?.name?.split(' ')[0]}&rsquo;s rate</span>}
+                          <span className="lbl">Cost</span>
+                          <b>{money(cost)}</b><small>/ {i.baseUnit}</small>
                         </span>
 
                         <span className="chips">
@@ -913,9 +1002,16 @@ export default function NewBill() {
 
                         <span className="foot">
                           <span className="cat">{i.category || 'Uncategorised'}</span>
-                          <span className="add" aria-hidden="true"><Plus size={16} strokeWidth={2.6} /></span>
+                          <span className="steps">
+                            <button type="button" className="minus" disabled={inBill <= 0}
+                                    aria-label={`One less ${i.name}`} title={`Remove one ${i.name}`}
+                                    onClick={(e) => { e.stopPropagation(); stepDown(lineForItem(i.id)); }}>
+                              <Minus size={16} strokeWidth={2.8} />
+                            </button>
+                            <span className="add" aria-hidden="true"><Plus size={16} strokeWidth={2.6} /></span>
+                          </span>
                         </span>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -1171,6 +1267,16 @@ export default function NewBill() {
               <span className="spacer" />
               <span className="money" style={{ fontSize: 21 }}>{money(totals.total)}</span>
             </div>
+            {editingBill && returnedNote.length > 0 && (
+              <div className="small" style={{
+                marginTop: 8, padding: '8px 10px', background: 'var(--info-bg)', color: '#1D4ED8',
+                border: '1px solid #BFDBFE', borderRadius: 'var(--r-sm)', lineHeight: 1.5,
+              }}>
+                <strong>Returned earlier, so not shown here:</strong> {returnedNote.join(', ')}
+                {' '}({money(editSplit.returnedValue)}). They are already taken off this bill and stay recorded
+                as returns — this total is what the bill is worth now.
+              </div>
+            )}
             {editingBill && alreadyPaid > 0 && (
               <div style={{ marginTop: 6 }}>
                 <SumRow label="Already paid on this bill" value={alreadyPaid} muted />
@@ -1181,6 +1287,49 @@ export default function NewBill() {
               Rounding: {settings.roundingRule === 'exact' ? 'exact' : `nearest ${settings.roundingRule.replace('nearest', '')}`}
               {' '}(change in Settings)
             </div>
+          </Card>
+
+          <Card
+            title="Items in this bill"
+            subtitle={billLines.length
+              ? `${billLines.length} item${billLines.length === 1 ? '' : 's'} · ${money(totals.subtotal)}`
+              : 'Nothing added yet'}
+          >
+            {!billLines.length ? (
+              <div className="small muted">Tap an item on the left to add it.</div>
+            ) : (
+              <div className="side-items">
+                {billLines.map((l) => {
+                  const item = data.items.find((i) => i.id === l.itemId);
+                  const sup = l.supplierId ? data.suppliers.find((x) => x.id === l.supplierId)?.name : '';
+                  return (
+                    <div key={l.key} className="side-item">
+                      <div className="si-main">
+                        <div className="si-name">{item?.name || 'Item'}</div>
+                        <div className="si-sub">
+                          {l.price !== '' ? `${money(Number(l.price) || 0)} / ${l.unit}` : 'No price yet'}
+                          {sup ? ` · ${sup}` : ''}
+                        </div>
+                      </div>
+                      <div className="si-qty">
+                        <button type="button" aria-label={`One less ${item?.name || 'item'}`} onClick={() => stepDown(l)}>
+                          <Minus size={13} strokeWidth={2.8} />
+                        </button>
+                        <span>{Number(l.qty) || 0}</span>
+                        <button type="button" aria-label={`One more ${item?.name || 'item'}`} onClick={() => stepUp(l)}>
+                          <Plus size={13} strokeWidth={2.8} />
+                        </button>
+                      </div>
+                      <div className="si-amt">{money(r2((Number(l.qty) || 0) * (Number(l.price) || 0)))}</div>
+                      <button type="button" className="si-x" aria-label="Remove from bill" title="Remove from bill"
+                              onClick={() => removeLine(l.key)}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </Card>
 
           <Card
@@ -1243,6 +1392,14 @@ export default function NewBill() {
                     </div>
                   );
                 })}
+                {refundedBack > 0.004 && (
+                  <div className="row" style={{ gap: 8, padding: '3px 0' }}>
+                    <span className="small muted nowrap">Returned goods</span>
+                    <span className="small">Money handed back to {party?.name || 'the customer'}</span>
+                    <span className="spacer" />
+                    <span className="money" style={{ color: 'var(--danger)' }}>− {money(refundedBack)}</span>
+                  </div>
+                )}
                 <div className="row" style={{ gap: 8, paddingTop: 5, marginTop: 4, borderTop: '1px solid var(--border)' }}>
                   <span className="small" style={{ fontWeight: 600 }}>Total already paid</span>
                   <span className="spacer" />

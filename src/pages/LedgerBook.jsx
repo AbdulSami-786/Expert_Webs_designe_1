@@ -104,11 +104,15 @@ export default function LedgerBook() {
                 </thead>
                 <tbody>
                   {display.map((r, i) => (
-                    <tr key={`${r.date}-${r.ref}-${i}`}>
+                    <tr key={`${r.date}-${r.ref}-${i}`} style={r.kind ? { opacity: 0.72 } : undefined}>
                       <td className="nowrap">{fmtDate(r.date)}</td>
                       <td style={{ fontWeight: 600 }}>{r.ref}</td>
                       {!partyId && <td>{r.party}</td>}
-                      <td>{r.desc}</td>
+                      <td>
+                        {r.desc}
+                        {r.kind === 'void' && <span className="pill pill-voided" style={{ marginLeft: 8 }}>Voided</span>}
+                        {r.kind === 'reversal' && <span className="pill pill-voided" style={{ marginLeft: 8 }}>Reversed</span>}
+                      </td>
                       <td className="r">
                         {r.debit ? <Money value={r.debit} /> : <span className="muted">—</span>}
                       </td>
@@ -136,7 +140,7 @@ export default function LedgerBook() {
 
             <div className="mcards" style={{ padding: 12 }}>
               {display.map((r, i) => (
-                <div key={`${r.date}-${r.ref}-${i}`} className="mcard">
+                <div key={`${r.date}-${r.ref}-${i}`} className="mcard" style={r.kind ? { opacity: 0.72 } : undefined}>
                   <div className="top">
                     <span className="name">{r.desc}</span>
                     <span className="amt" style={{ color: r.debit ? 'var(--danger)' : 'var(--success)' }}>

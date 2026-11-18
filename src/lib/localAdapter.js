@@ -9,7 +9,7 @@ import { CONFIG, DEFAULT_METHODS } from './config';
 import { uid, todayISO, r2, addDays, captureIds } from './format';
 import {
   billTotals, billState, billPaymentRoom, lineDeliveredQty, lineReceivedQty, supplierBalance,
-  partyDeletePlan,
+  partyDeletePlan, billDeletePlan, purgePlan,
 } from './calc';
 
 const DB_KEY = 'ewd_db_v1';
@@ -805,6 +805,108 @@ async function perform(action, payload = {}) {
       };
     }
 
+    /* Permanently remove one bill with its lines, payments, returns and cheques. Stock and money follow
+       from those records going away; advance the bill had used goes back to the party's advance
+       balance, and a set-off is taken back from the supplier side too. Only a super admin may do this. */
+    case 'deleteBill': {
+      const me = sessionUser(d);
+      if (!me || !isSuper(me) || !isActiveUser(me)) {
+        throw new Error('Only a super admin can permanently delete a bill.');
+      }
+      const plan = billDeletePlan(payload.id, d);
+      if (!plan) throw new Error('Bill not found');
+      const bill = plan.bill;
+
+      // give the advance back (newest advance first, up to what each one had applied)
+      let back = plan.advanceUsed;
+      [...d.partyAdvances].filter((a) => a.partyId === bill.partyId)
+        .sort((a, b) => String(b.dateReceived).localeCompare(String(a.dateReceived)))
+        .forEach((a) => {
+          if (back <= 0.004) return;
+          const give = Math.min(back, Number(a.applied) || 0);
+          if (give > 0) { a.applied = r2((Number(a.applied) || 0) - give); back = r2(back - give); }
+        });
+      // take the set-off back from the supplier side
+      plan.setOffs.forEach((so) => {
+        const sp = d.supplierPayments.find((x) => x.id === so.id);
+        if (!sp) return;
+        if (so.whole) d.supplierPayments = d.supplierPayments.filter((x) => x.id !== so.id);
+        else sp.amount = r2(sp.amount - so.amount);
+      });
+
+      const pay = new Set(plan.payments.map((x) => x.id));
+      const chq = new Set(plan.cheques.map((x) => x.id));
+      d.billItems = d.billItems.filter((x) => x.billId !== bill.id);
+      d.returns = d.returns.filter((x) => x.billId !== bill.id);
+      d.payments = d.payments.filter((x) => !pay.has(x.id));
+      d.cheques = d.cheques.filter((x) => !chq.has(x.id));
+      d.bills = d.bills.filter((x) => x.id !== bill.id);
+
+      logActivity(d, 'bill', bill.id, 'delete',
+        `Permanently deleted Bill ${bill.billNo} (${bill.totalAmount}) with ${plan.payments.length} payment(s) `
+        + `(${plan.paid} paid), ${plan.returns.length} return(s); ${plan.restocked} item quantity put back in stock`
+        + (payload.reason ? ` — ${payload.reason}` : ''), bill, null);
+      save();
+      return {
+        ok: true, billNo: bill.billNo, payments: plan.payments.length, paid: plan.paid,
+        returns: plan.returns.length, restocked: plan.restocked, advanceReturned: plan.advanceUsed,
+      };
+    }
+
+    /* Remove every entry dated between two days (see purgePlan in calc.js for exactly what that is). The
+       caller must be a super admin and must send both dates; the result says what was removed. */
+    case 'purgeEntries': {
+      const me = sessionUser(d);
+      if (!me || !isSuper(me) || !isActiveUser(me)) {
+        throw new Error('Only a super admin can remove entries by date.');
+      }
+      const dateOk = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+      if (!dateOk(payload.from) || !dateOk(payload.to)) throw new Error('Choose both dates.');
+      if (payload.from > payload.to) throw new Error('"From" must not be after "To".');
+
+      const plan = purgePlan(d, payload.from, payload.to);
+      if (!plan.count) return { ok: true, removed: 0, count: 0 };
+      const ids = (arr) => new Set(arr.map((x) => x.id));
+
+      // give advance back to the advances that stay (newest first)
+      Object.entries(plan.advBack).forEach(([partyId, amount]) => {
+        let back = amount;
+        const gone = ids(plan.advances);
+        [...d.partyAdvances].filter((a) => a.partyId === partyId && !gone.has(a.id))
+          .sort((a, b) => String(b.dateReceived).localeCompare(String(a.dateReceived)))
+          .forEach((a) => {
+            if (back <= 0.004) return;
+            const give = Math.min(back, Number(a.applied) || 0);
+            if (give > 0) { a.applied = r2((Number(a.applied) || 0) - give); back = r2(back - give); touch(d, a.id); }
+          });
+      });
+      // take the set-offs' supplier half back
+      plan.setOffs.forEach((so) => {
+        const sp = d.supplierPayments.find((x) => x.id === so.id);
+        if (!sp) return;
+        if (so.whole) d.supplierPayments = d.supplierPayments.filter((x) => x.id !== so.id);
+        else { sp.amount = r2(sp.amount - so.amount); touch(d, sp.id); }
+      });
+
+      const drop = (key, arr) => { const g = ids(arr); d[key] = d[key].filter((x) => !g.has(x.id)); };
+      drop('billItems', plan.lines); drop('returns', plan.returns); drop('payments', plan.payments);
+      drop('cheques', plan.cheques); drop('partyItemPrices', plan.prices); drop('bills', plan.bills);
+      drop('partyAdvances', plan.advances);
+      drop('purchases', plan.purchases); drop('purchaseBills', plan.purchaseBills);
+      drop('supplierPayments', plan.supplierPayments); drop('supplierReturns', plan.supplierReturns);
+      drop('expenses', plan.expenses); drop('stockLoss', plan.stockLoss);
+      drop('employeeTx', plan.employeeTx); drop('assets', plan.assets);
+      plan.itemsToRefresh.forEach((itemId) => refreshItemCost(d, itemId));
+
+      logActivity(d, 'system', 'purge', 'delete',
+        `Removed all entries dated ${payload.from} to ${payload.to}: ${plan.bills.length} bill(s), ${plan.payments.length} payment(s), `
+        + `${plan.returns.length} return(s), ${plan.advances.length} advance(s), ${plan.purchaseBills.length} purchase bill(s), `
+        + `${plan.expenses.length} expense(s), ${plan.employeeTx.length} staff entr(ies), ${plan.stockLoss.length} stock loss(es), `
+        + `${plan.assets.length} asset(s)`, null, null);
+      save();
+      return { ok: true, count: plan.count, totals: plan.totals };
+    }
+
     /* ---------------- Items ---------------- */
     case 'saveItem': {
       const it = payload;
@@ -901,9 +1003,11 @@ async function perform(action, payload = {}) {
         // and an edit below them leaves that money overpaid.
         const oldState = billState(old, d);
         const alreadyPaid = r2(oldState.paid + oldState.pendingCheques);
-        if (alreadyPaid > r2(computed.total) + 0.004) {
+        // Measured after the returns: goods that came back are no longer part of what is owed.
+        const worthNow = r2(r2(computed.total) - oldState.returned);
+        if (alreadyPaid > worthNow + 0.004) {
           throw new Error(`This bill already has ${alreadyPaid.toFixed(2)} paid against it, `
-            + `so it cannot be reduced to ${computed.total.toFixed(2)}. `
+            + `so it cannot be reduced to ${worthNow.toFixed(2)}. `
             + 'Record a return, or reverse a payment first.');
         }
 
@@ -1423,6 +1527,23 @@ async function perform(action, payload = {}) {
 
     /* Hand money back to a party for goods they returned from a bill they had paid. It is kept on
        the bill's return record, so the ledger shows it as a refund and the till pays it out. */
+    /* Remove a return entry for good. Stock and what the bill is worth are worked out from the
+       returns that exist, so removing one puts the bill back up, takes the restocked goods back
+       out of stock and (when money was handed back with it) puts that money back in the till. */
+    case 'deleteReturn': {
+      const i = d.returns.findIndex((x) => x.id === payload.id);
+      if (i < 0) throw new Error('Return not found');
+      const ret = d.returns[i];
+      const bill = d.bills.find((b) => b.id === ret.billId);
+      d.returns.splice(i, 1);
+      logActivity(d, 'return', ret.id, 'delete',
+        `Deleted return of ${ret.qty} (value ${ret.valueAdjusted})${bill ? ` against Bill ${bill.billNo}` : ''}`
+        + (Number(ret.refundAmount) > 0 ? `, refund of ${ret.refundAmount} reversed` : '')
+        + (payload.reason ? ` — ${payload.reason}` : ''), ret, null);
+      save();
+      return { ok: true };
+    }
+
     case 'addRefund': {
       const p = payload;
       const bill = d.bills.find((x) => x.id === p.billId);

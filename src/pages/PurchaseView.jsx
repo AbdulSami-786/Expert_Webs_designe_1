@@ -53,10 +53,13 @@ export default function PurchaseView() {
   const supplier = billRec ? data.suppliers.find((s) => s.id === billRec.supplierId) : null;
   const lines = bill ? purchaseBillLines(bill.id, data) : (line ? [line] : []);
 
+  // Newest entry first (the last one recorded on a day comes before the earlier ones).
+  const newestFirst = (list) => [...list].reverse()
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const payments = useMemo(() => (bill
-    ? data.supplierPayments.filter((p) => p.purchaseBillId === bill.id) : []), [bill, data.supplierPayments]);
+    ? newestFirst(data.supplierPayments.filter((p) => p.purchaseBillId === bill.id)) : []), [bill, data.supplierPayments]);
   const returns = useMemo(() => (bill
-    ? data.supplierReturns.filter((r) => r.purchaseBillId === bill.id) : []), [bill, data.supplierReturns]);
+    ? newestFirst(data.supplierReturns.filter((r) => r.purchaseBillId === bill.id)) : []), [bill, data.supplierReturns]);
 
   if (!line) {
     return <Empty icon={ShoppingCart} title="Purchase not found"

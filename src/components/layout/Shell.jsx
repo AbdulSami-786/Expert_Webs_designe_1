@@ -197,7 +197,8 @@ export default function Shell() {
             <span className="sync-chip"><RefreshCw size={13} /> {pending} pending sync</span>
           )}
 
-          <Button icon={CalendarCheck} onClick={() => setCloseToday(true)}>Close Today</Button>
+          {/* The day's closing figures (cash, sales, dues) are for the owner: admins only. */}
+          {isAdmin && <Button icon={CalendarCheck} onClick={() => setCloseToday(true)}>Close Today</Button>}
           {isAdmin && <Button icon={Download} onClick={onBackup}>Backup</Button>}
           {can('new-bill') && (
             <Button variant="primary" icon={FilePlus2} onClick={() => nav('/bill/new')}>New Bill</Button>
@@ -237,7 +238,7 @@ export default function Shell() {
         ))}
       </nav>
 
-      <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />
+      {isAdmin && <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />}
       <Toasts toasts={toasts} />
     </div>
   );

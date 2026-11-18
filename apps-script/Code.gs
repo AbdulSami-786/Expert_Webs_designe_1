@@ -158,7 +158,7 @@ var BOOLEAN = { reversed: 1, restock: 1, active: 1, isAdvance: 1 };
  * Deploy > Manage deployments > pencil > Version: New version > Deploy).
  */
 var BACKEND_VERSION = '1.5.0';
-var BACKEND_FEATURES = ['adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty'];
+var BACKEND_FEATURES = ['adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries'];
 
 function doGet(e) {
   return json({
@@ -326,6 +326,8 @@ function route(action, p, token) {
 
     case 'saveBill':         return saveBill(p);
     case 'voidBill':         return voidBill(p);
+    case 'deleteBill':       return deleteBill(p);
+    case 'purgeEntries':     return purgeEntries(p);
     case 'setDelivery':      return setDelivery(p);
     case 'setLineDelivery':  return setLineDelivery(p);
 
@@ -337,6 +339,7 @@ function route(action, p, token) {
 
     case 'addReturn':        return addReturn(p);
     case 'addRefund':        return addRefund(p);
+    case 'deleteReturn':     return deleteReturn(p);
 
     case 'saveCheque':       return saveCheque(p);
     case 'setChequeStatus':  return setChequeStatus(p);
@@ -1997,10 +2000,25 @@ function saveBill(p) {
       // advance, and simply disappears from the ledger. Refusing says what is
       // wrong and leaves the shopkeeper to record a return or a refund, which
       // are the operations that actually account for the money.
-      var alreadyPaid = r2(r2(existing.totalAmount) - billDue(p.id));
-      if (alreadyPaid > r2(computed.total) + 0.004) {
+      // Money still paid on it (a refund handed back no longer counts) against what the bill would
+      // be worth AFTER its returns: goods that came back are not part of what is owed.
+      var retRows = readAll('Returns').filter(function (r) { return r.billId === p.id; });
+      var returnedSoFar = 0, refundedSoFar = 0;
+      retRows.forEach(function (r) {
+        returnedSoFar += Number(r.valueAdjusted) || 0;
+        refundedSoFar += Number(r.refundAmount) || 0;
+      });
+      var bouncedPay = {};
+      readAll('Cheques').forEach(function (c) { if (c.status === 'bounced' && c.paymentId) bouncedPay[c.paymentId] = 1; });
+      var paidSoFar = 0;
+      readAll('Payments').forEach(function (x) {
+        if (x.billId === p.id && !x.reversed && !bouncedPay[x.id]) paidSoFar += Number(x.amount) || 0;
+      });
+      var alreadyPaid = r2(Math.max(0, paidSoFar - refundedSoFar));
+      var worthNow = r2(r2(computed.total) - r2(returnedSoFar));
+      if (alreadyPaid > worthNow + 0.004) {
         fail('This bill already has ' + alreadyPaid.toFixed(2) + ' paid against it, ' +
-             'so it cannot be reduced to ' + computed.total.toFixed(2) + '. ' +
+             'so it cannot be reduced to ' + worthNow.toFixed(2) + '. ' +
              'Record a return, or reverse a payment first.');
       }
 
@@ -2413,6 +2431,274 @@ function voidBill(p) {
     logActivity('bill', p.id, 'void',
       'Voided Bill ' + bill.billNo + (p.reason ? ' — ' + p.reason : ''), bill, patch);
     return getById('Bills', p.id);
+  });
+}
+
+/**
+ * Permanently delete one bill with its lines, payments, returns and cheques. Stock and money follow
+ * from those records going away; advance the bill had used goes back to the party's advance balance
+ * and a set-off is taken back from the supplier side too. Super admin only. Mirrors 'deleteBill' in
+ * src/lib/localAdapter.js.
+ */
+function deleteBill(p) {
+  return withLock(function () {
+    var me = findUserByName(readAll('Users'), ACTING_USER);
+    if (!me || !userIsSuper(me) || !userIsActive(me)) {
+      fail('Only a super admin can permanently delete a bill.');
+    }
+    var bill = getById('Bills', p.id);
+    if (!p.id || !bill) fail('Bill not found');
+    var day = function (v) { return String(v || '').slice(0, 10); };
+
+    var lines = readAll('BillItems').filter(function (l) { return l.billId === bill.id; });
+    var payments = readAll('Payments').filter(function (x) { return x.billId === bill.id; });
+    var payIds = idSet(payments);
+    var returns = readAll('Returns').filter(function (r) { return r.billId === bill.id; });
+    var cheques = readAll('Cheques').filter(function (c) {
+      return c.billId === bill.id || (c.paymentId && payIds[String(c.paymentId)]);
+    });
+
+    // advance this bill used goes back to the party's advance balance (newest advance first)
+    var advanceUsed = 0;
+    var paid = 0;
+    payments.forEach(function (x) {
+      if (x.reversed) return;
+      if (x.method === 'Advance') advanceUsed += Number(x.amount) || 0;
+      else if (x.method !== 'Set-off') paid += Number(x.amount) || 0;
+    });
+    advanceUsed = r2(advanceUsed);
+    paid = r2(paid);
+    var back = advanceUsed;
+    if (back > 0.004) {
+      var advs = readAll('PartyAdvances').filter(function (a) { return a.partyId === bill.partyId; })
+        .sort(function (a, b) { return String(dayOf(b.dateReceived)).localeCompare(String(dayOf(a.dateReceived))); });
+      advs.forEach(function (a) {
+        if (back <= 0.004) return;
+        var give = Math.min(back, Number(a.applied) || 0);
+        if (give > 0) {
+          updateRow('PartyAdvances', findRow('PartyAdvances', a.id), { applied: r2((Number(a.applied) || 0) - give) });
+          back = r2(back - give);
+        }
+      });
+    }
+
+    // a set-off also paid the supplier side: take this bill's part back
+    var supplier = null;
+    var sups = readAll('Suppliers');
+    for (var si = 0; si < sups.length; si++) if (sups[si].partyId === bill.partyId) supplier = sups[si];
+    if (supplier) {
+      var taken = {};
+      var spAll = readAll('SupplierPayments');
+      payments.forEach(function (x) {
+        if (x.method !== 'Set-off' || x.reversed) return;
+        var amt = r2(x.amount);
+        var hit = null;
+        for (var i = 0; i < spAll.length; i++) {
+          var sp = spAll[i];
+          if (taken[sp.id] || sp.supplierId !== supplier.id || sp.method !== 'Set-off') continue;
+          if (day(sp.date) !== day(x.date) || (sp.note || '') !== (x.note || '')) continue;
+          if (r2(sp.amount) < amt - 0.004) continue;
+          if (!hit || Math.abs(r2(sp.amount) - amt) < 0.005) hit = sp;
+        }
+        if (!hit) return;
+        taken[hit.id] = 1;
+        if (Math.abs(r2(hit.amount) - amt) < 0.005) {
+          deleteRowById('SupplierPayments', hit.id);
+        } else {
+          updateRow('SupplierPayments', findRow('SupplierPayments', hit.id), { amount: r2(r2(hit.amount) - amt) });
+        }
+      });
+    }
+
+    var restocked = 0;
+    lines.forEach(function (l) { restocked += Number(l.qty) || 0; });
+
+    deleteRowsByIds('BillItems', idSet(lines));
+    deleteRowsByIds('Returns', idSet(returns));
+    deleteRowsByIds('Payments', payIds);
+    deleteRowsByIds('Cheques', idSet(cheques));
+    deleteRowById('Bills', bill.id);
+
+    logActivity('bill', bill.id, 'delete',
+      'Permanently deleted Bill ' + bill.billNo + ' (' + bill.totalAmount + ') with ' + payments.length +
+      ' payment(s) (' + paid + ' paid), ' + returns.length + ' return(s); ' + restocked +
+      ' item quantity put back in stock' + (p.reason ? ' — ' + p.reason : ''), bill, null);
+    return {
+      ok: true, billNo: bill.billNo, payments: payments.length, paid: paid,
+      returns: returns.length, restocked: restocked, advanceReturned: advanceUsed
+    };
+  });
+}
+
+/**
+ * Remove every entry dated from p.from to p.to (YYYY-MM-DD, both included). Mirrors purgePlan() in
+ * src/lib/calc.js and the 'purgeEntries' case of src/lib/localAdapter.js, which say exactly what that is:
+ * bills in the range with everything on them; payments, returns, advances and loose cheques dated in the
+ * range; purchase bills in the range with their lines, supplier payments and returns, and loose ones dated
+ * in the range; expenses, staff entries, stock loss and assets in the range. People, items, suppliers and
+ * the Activity Log are never touched. Stock, balances and what everyone owes follow from the records
+ * going away; advance a removed payment had used goes back, a set-off's supplier half is taken back and
+ * item cost prices are refreshed. Super admin only.
+ */
+function purgeEntries(p) {
+  return withLock(function () {
+    var me = findUserByName(readAll('Users'), ACTING_USER);
+    if (!me || !userIsSuper(me) || !userIsActive(me)) {
+      fail('Only a super admin can remove entries by date.');
+    }
+    var dateOk = function (v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')); };
+    if (!dateOk(p.from) || !dateOk(p.to)) fail('Choose both dates.');
+    if (p.from > p.to) fail('"From" must not be after "To".');
+    var from = p.from, to = p.to;
+    var within = function (v) { var x = dayOf(v); return !!x && x >= from && x <= to; };
+    var day = function (v) { return String(v || '').slice(0, 10); };
+    var pick = function (rows, fn) { return rows.filter(fn); };
+
+    var allBills = readAll('Bills'), allPayments = readAll('Payments'), allAdvances = readAll('PartyAdvances');
+    var bills = pick(allBills, function (b) { return within(b.date); });
+    var billIds = idSet(bills);
+    var advances = pick(allAdvances, function (a) { return within(a.dateReceived); });
+
+    var payIds = {};
+    allPayments.forEach(function (x) { if (billIds[String(x.billId)] || within(x.date)) payIds[String(x.id)] = 1; });
+    // what a removed advance had paid for (oldest payments first, as deleting an advance does)
+    advances.forEach(function (a) {
+      var budget = r2(a.applied);
+      if (budget <= 0.004) return;
+      for (var i = 0; i < allPayments.length && budget > 0.004; i++) {
+        var x = allPayments[i];
+        if (x.partyId !== a.partyId || x.method !== 'Advance' || x.reversed || payIds[String(x.id)]) continue;
+        payIds[String(x.id)] = 1;
+        budget = r2(budget - r2(x.amount));
+      }
+    });
+    var payments = pick(allPayments, function (x) { return payIds[String(x.id)]; });
+
+    var returns = pick(readAll('Returns'), function (r) { return billIds[String(r.billId)] || within(r.date); });
+    var cheques = pick(readAll('Cheques'), function (c) {
+      return billIds[String(c.billId)] || (c.paymentId && payIds[String(c.paymentId)]) || (!c.paymentId && within(c.dateIssued));
+    });
+    var prices = pick(readAll('PartyItemPrices'), function (x) { return within(x.date); });
+    var lines = pick(readAll('BillItems'), function (l) { return billIds[String(l.billId)]; });
+
+    var purchaseBills = pick(readAll('PurchaseBills'), function (b) { return within(b.date); });
+    var pbIds = idSet(purchaseBills);
+    var purchases = pick(readAll('Purchases'), function (x) {
+      return x.purchaseBillId ? pbIds[String(x.purchaseBillId)] : within(x.date);
+    });
+    var allSupPays = readAll('SupplierPayments');
+    var supplierPayments = pick(allSupPays, function (x) { return pbIds[String(x.purchaseBillId)] || within(x.date); });
+    var spIds = idSet(supplierPayments);
+    var supplierReturns = pick(readAll('SupplierReturns'), function (x) { return pbIds[String(x.purchaseBillId)] || within(x.date); });
+
+    var allLoss = readAll('StockLoss'), allExp = readAll('Expenses');
+    var expIdsA = idSet(pick(allExp, function (e) { return within(e.date); }));
+    var lossIdsA = idSet(pick(allLoss, function (l) { return within(l.date); }));
+    var stockLoss = pick(allLoss, function (l) { return lossIdsA[String(l.id)] || expIdsA[String(l.linkedExpenseId)]; });
+    var lossIds = idSet(stockLoss);
+    var expenses = pick(allExp, function (e) {
+      return expIdsA[String(e.id)] || (e.linkedStockLossId && lossIds[String(e.linkedStockLossId)]);
+    });
+    var employeeTx = pick(readAll('EmployeeTransactions'), function (t) { return within(t.date); });
+    var assets = pick(readAll('Assets'), function (a) { return within(a.date); });
+
+    var count = bills.length + payments.length + returns.length + cheques.length + advances.length +
+      purchaseBills.length + purchases.filter(function (x) { return !x.purchaseBillId; }).length +
+      supplierPayments.length + supplierReturns.length + expenses.length + stockLoss.length +
+      employeeTx.length + assets.length;
+    if (!count) return { ok: true, count: 0 };
+
+    // advance that removed payments had drawn from advances that STAY goes back to them
+    var advBack = {}, deletedApplied = {};
+    advances.forEach(function (a) { deletedApplied[a.partyId] = r2((deletedApplied[a.partyId] || 0) + r2(a.applied)); });
+    payments.forEach(function (x) {
+      if (x.method === 'Advance' && !x.reversed) advBack[x.partyId] = r2((advBack[x.partyId] || 0) + r2(x.amount));
+    });
+    var advGone = idSet(advances);
+    Object.keys(advBack).forEach(function (pid) {
+      var back = r2(Math.max(0, advBack[pid] - (deletedApplied[pid] || 0)));
+      if (back <= 0.004) return;
+      allAdvances.filter(function (a) { return a.partyId === pid && !advGone[String(a.id)]; })
+        .sort(function (a, b) { return String(dayOf(b.dateReceived)).localeCompare(String(dayOf(a.dateReceived))); })
+        .forEach(function (a) {
+          if (back <= 0.004) return;
+          var give = Math.min(back, Number(a.applied) || 0);
+          if (give > 0) {
+            updateRow('PartyAdvances', findRow('PartyAdvances', a.id), { applied: r2((Number(a.applied) || 0) - give) });
+            back = r2(back - give);
+          }
+        });
+    });
+
+    // a set-off's supplier half is taken back (unless it is itself in the range)
+    var sups = readAll('Suppliers');
+    var supOf = function (partyId) {
+      for (var i = 0; i < sups.length; i++) if (String(sups[i].partyId) === String(partyId)) return sups[i];
+      return null;
+    };
+    var takenSp = {}, supDelete = {};
+    var billById = {};
+    allBills.forEach(function (b) { billById[b.id] = b; });
+    payments.forEach(function (x) {
+      if (x.method !== 'Set-off' || x.reversed) return;
+      var partyId = x.partyId || (billById[x.billId] && billById[x.billId].partyId);
+      var sup = supOf(partyId);
+      if (!sup) return;
+      var amt = r2(x.amount);
+      var hit = null;
+      for (var i = 0; i < allSupPays.length; i++) {
+        var sp = allSupPays[i];
+        if (takenSp[sp.id] || spIds[String(sp.id)] || sp.supplierId !== sup.id || sp.method !== 'Set-off') continue;
+        if (day(dayOf(sp.date)) !== day(dayOf(x.date)) || (sp.note || '') !== (x.note || '')) continue;
+        if (r2(sp.amount) < amt - 0.004) continue;
+        if (!hit || Math.abs(r2(sp.amount) - amt) < 0.005) hit = sp;
+      }
+      if (!hit) return;
+      takenSp[hit.id] = 1;
+      if (Math.abs(r2(hit.amount) - amt) < 0.005) supDelete[String(hit.id)] = 1;
+      else updateRow('SupplierPayments', findRow('SupplierPayments', hit.id), { amount: r2(r2(hit.amount) - amt) });
+    });
+
+    deleteRowsByIds('BillItems', idSet(lines));
+    deleteRowsByIds('Returns', idSet(returns));
+    deleteRowsByIds('Payments', payIds);
+    deleteRowsByIds('Cheques', idSet(cheques));
+    deleteRowsByIds('PartyItemPrices', idSet(prices));
+    deleteRowsByIds('Bills', billIds);
+    deleteRowsByIds('PartyAdvances', advGone);
+    deleteRowsByIds('Purchases', idSet(purchases));
+    deleteRowsByIds('PurchaseBills', pbIds);
+    var spDel = {};
+    Object.keys(spIds).forEach(function (k) { spDel[k] = 1; });
+    Object.keys(supDelete).forEach(function (k) { spDel[k] = 1; });
+    deleteRowsByIds('SupplierPayments', spDel);
+    deleteRowsByIds('SupplierReturns', idSet(supplierReturns));
+    deleteRowsByIds('Expenses', idSet(expenses));
+    deleteRowsByIds('StockLoss', lossIds);
+    deleteRowsByIds('EmployeeTransactions', idSet(employeeTx));
+    deleteRowsByIds('Assets', idSet(assets));
+
+    var seen = {};
+    purchases.forEach(function (x) {
+      if (seen[x.itemId]) return;
+      seen[x.itemId] = 1;
+      refreshItemCost(x.itemId);
+    });
+
+    var sum = function (rows, f) { return r2(rows.reduce(function (t, x) { return t + (Number(f(x)) || 0); }, 0)); };
+    logActivity('system', 'purge', 'delete',
+      'Removed all entries dated ' + from + ' to ' + to + ': ' + bills.length + ' bill(s), ' + payments.length +
+      ' payment(s), ' + returns.length + ' return(s), ' + advances.length + ' advance(s), ' + purchaseBills.length +
+      ' purchase bill(s), ' + expenses.length + ' expense(s), ' + employeeTx.length + ' staff entr(ies), ' +
+      stockLoss.length + ' stock loss(es), ' + assets.length + ' asset(s)');
+    return {
+      ok: true, count: count,
+      totals: {
+        sales: sum(bills, function (b) { return b.totalAmount; }),
+        payments: sum(payments.filter(function (x) { return !x.reversed; }), function (x) { return x.amount; }),
+        expenses: sum(expenses, function (e) { return e.amount; })
+      }
+    };
   });
 }
 
@@ -2845,6 +3131,27 @@ function addReturn(p) {
       'Return against Bill ' + bill.billNo + ' — value ' + rec.valueAdjusted +
       (refund > 0 ? ', refunded ' + refund + ' (' + rec.refundMethod + ')' : ''));
     return rec;
+  });
+}
+
+/**
+ * Remove a return entry for good. What a bill is worth, the stock and the cash balances are all
+ * worked out from the records that exist, so removing it puts the bill back up, takes restocked
+ * goods back out of stock and puts any refunded money back in the till. Mirrors 'deleteReturn'
+ * in src/lib/localAdapter.js.
+ */
+function deleteReturn(p) {
+  return withLock(function () {
+    var ret = getById('Returns', p.id);
+    if (!p.id || !ret) fail('Return not found');
+    var bill = getById('Bills', ret.billId);
+    deleteRowById('Returns', ret.id);
+    logActivity('return', ret.id, 'delete',
+      'Deleted return of ' + ret.qty + ' (value ' + ret.valueAdjusted + ')' +
+      (bill ? ' against Bill ' + bill.billNo : '') +
+      (Number(ret.refundAmount) > 0 ? ', refund of ' + ret.refundAmount + ' reversed' : '') +
+      (p.reason ? ' — ' + p.reason : ''), ret, null);
+    return { ok: true };
   });
 }
 

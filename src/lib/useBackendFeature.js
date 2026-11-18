@@ -12,6 +12,8 @@ const PROBES = {
   addRefund: () => api.addRefund({}),
   adoptPurchases: () => api.adoptPurchases({}),
   deleteParty: () => api.deleteParty(''),
+  deleteBill: () => api.deleteBill(''),
+  purgeEntries: () => api.purgeEntries('', ''),
 };
 
 // 'ok' | 'old'. An outage is not remembered: it says nothing about the script.

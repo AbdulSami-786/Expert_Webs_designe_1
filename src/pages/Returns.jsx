@@ -2,12 +2,13 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RotateCcw, Plus, Download, Search } from 'lucide-react';
+import { RotateCcw, Plus, Download, Search, Trash2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import {
   Card, Button, Empty, PageHead, SearchBar, Money, Pill, Modal, Field, Select, Stat,
 } from '../components/ui';
 import ReturnModal from '../components/forms/ReturnModal';
+import DeleteReturnConfirm from '../components/forms/DeleteReturnConfirm';
 import { deriveBills } from '../lib/calc';
 import { money, fmtDate, norm, r2 } from '../lib/format';
 import { exportExcel } from '../lib/exporters';
@@ -18,6 +19,7 @@ export default function Returns() {
   const [q, setQ] = useState('');
   const [pickOpen, setPickOpen] = useState(false);
   const [pickedBill, setPickedBill] = useState(null);
+  const [delId, setDelId] = useState(null);
 
   const rows = useMemo(() => {
     const term = norm(q);
@@ -79,6 +81,7 @@ export default function Returns() {
                     <th>Date</th><th>Bill</th><th>Party</th><th>Item</th>
                     <th className="r">Qty</th><th>Restocked</th><th>Note</th>
                     <th className="r">Value</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -92,6 +95,12 @@ export default function Returns() {
                       <td>{r.restock ? <Pill status="paid" label="Yes" /> : <Pill status="voided" label="No" />}</td>
                       <td className="small muted">{r.note || '—'}</td>
                       <td className="r strong"><Money value={r.valueAdjusted} /></td>
+                      <td onClick={(e) => e.stopPropagation()} style={{ width: 36 }}>
+                        <button className="btn btn-ghost btn-icon" title="Delete this return"
+                                aria-label="Delete this return" onClick={() => setDelId(r.id)}>
+                          <Trash2 size={14} color="var(--danger)" />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -99,6 +108,7 @@ export default function Returns() {
                   <tr>
                     <td colSpan={7}>{totals.count} returns</td>
                     <td className="r">{money(totals.value)}</td>
+                    <td></td>
                   </tr>
                 </tfoot>
               </table>
@@ -116,6 +126,11 @@ export default function Returns() {
                     <span>{r.bill?.billNo}</span>
                     <span>{r.qty} {r.unit}</span>
                     <span>{fmtDate(r.date)}</span>
+                    <span className="spacer" />
+                    <button className="btn btn-ghost btn-sm" aria-label="Delete this return"
+                            onClick={(e) => { e.stopPropagation(); setDelId(r.id); }}>
+                      <Trash2 size={14} color="var(--danger)" />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -123,6 +138,8 @@ export default function Returns() {
           </>
         )}
       </Card>
+
+      <DeleteReturnConfirm returnId={delId} onClose={() => setDelId(null)} />
 
       <BillPicker open={pickOpen} onClose={() => setPickOpen(false)}
                   onPick={(b) => { setPickOpen(false); setPickedBill(b); }} />

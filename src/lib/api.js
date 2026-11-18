@@ -168,7 +168,7 @@ async function call(action, payload = {}, requestId = null) {
 const OPTIMISTIC = new Set([
   'saveBill', 'voidBill', 'setDelivery', 'setLineDelivery',
   'addPayment', 'settleParty', 'reversePayment', 'deletePayment', 'updatePayment',
-  'addReturn', 'addRefund',
+  'addReturn', 'addRefund', 'deleteReturn',
   'saveParty', 'archiveParty', 'saveItem', 'archiveItem',
   'saveCheque', 'setChequeStatus', 'deleteCheque',
   'addAdvance', 'deleteAdvance',
@@ -546,6 +546,10 @@ export const api = {
   // Bills — offline-safe (FR-12)
   saveBill:       (bill)        => offlineSafe('saveBill', bill),
   voidBill:       (id, reason)  => call('voidBill', { id, reason }),
+  // Permanent: the bill with its lines, payments, returns and cheques. Super admin only.
+  deleteBill:     (id, reason)  => call('deleteBill', { id, reason }),
+  // Remove every entry dated from..to (YYYY-MM-DD). Permanent. Super admin only.
+  purgeEntries:   (from, to)    => call('purgeEntries', { from, to }),
   setDelivery:    (id, delivery) => call('setDelivery', { id, delivery }),
   // Per line: [{ id, deliveredQty }] — some items go now, the rest later.
   setLineDelivery: (billId, lines) => call('setLineDelivery', { billId, lines }),
@@ -564,6 +568,8 @@ export const api = {
   addReturn:      (ret)         => call('addReturn', ret),
   // Hand money back for goods returned from a paid bill.
   addRefund:      (r)           => call('addRefund', r),
+  // Remove a return entry for good (the bill goes back up, restocked goods leave stock again).
+  deleteReturn:   (id, reason)  => call('deleteReturn', { id, reason }),
 
   // Cheques
   saveCheque:     (cheque)      => call('saveCheque', cheque),

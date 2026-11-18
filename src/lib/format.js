@@ -164,7 +164,11 @@ export function shareLink(token) {
   if (!token) return '';
   const base = String(CONFIG.publicUrl || '').replace(/\/+$/, '');
   if (base) return `${base}/#/share/${token}`;
-  return `${window.location.origin}${window.location.pathname}#/share/${token}`;
+  // No live address configured: use this page's own, but only when it is a real web address. From the
+  // desktop program (file://) or a bare dev server a link built from it would open nothing for the party.
+  const { origin, pathname, protocol, hostname } = window.location;
+  const reachable = /^https?:$/.test(protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(hostname);
+  return reachable ? `${origin}${pathname}#/share/${token}` : `#/share/${token}`;
 }
 
 /** Short id generator for client-side records. */

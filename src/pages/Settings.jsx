@@ -16,6 +16,7 @@ import { ROUNDING_RULES, money, applyRounding } from '../lib/format';
 import { downloadBackup, printReceiptTest, receiptWidthMm, RECEIPT_WIDTHS } from '../lib/exporters';
 import SyncPanel from '../components/SyncPanel';
 import OldDataImport from '../components/OldDataImport';
+import PurgeEntries from '../components/PurgeEntries';
 import { CONFIG, DEFAULT_METHODS } from '../lib/config';
 
 export default function Settings() {
@@ -256,6 +257,9 @@ export default function Settings() {
           )}
 
           {isAdmin && <OldDataImport />}
+
+          {/* ---------------- Remove entries between two dates ---------------- */}
+          {isAdmin && <PurgeEntries />}
 
           {/* ---------------- Google Sheets sync ---------------- */}
           {isAdmin && <SyncPanel />}

@@ -16,12 +16,13 @@ import {
   Plus, Download, Share2, Wallet, Send, Phone, Receipt, RotateCcw,
   Pencil, Ban, Copy, Trash2, MoreVertical, Printer, CheckCircle2,
   ChevronRight, ChevronDown, Package, ListOrdered, LayoutList, HandCoins, Search,
-  Lock, KeyRound, ShoppingCart, ArrowLeftRight, Banknote,
+  Lock, KeyRound, ShoppingCart, ArrowLeftRight, Banknote, XCircle,
 } from 'lucide-react';
 import { PartyLockScreen, PartyLockModal } from '../components/PartyLock';
 import { isLocked, isUnlocked, canOpen, relock } from '../lib/partyLock';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
+import { chequeSiblings } from '../lib/localAdapter';
 import {
   Card, Button, Modal, Empty, PageHead, Pill, Money, Field, Input,
   Confirm, BottomSheet, Stat,
@@ -34,6 +35,7 @@ import ReturnModal from '../components/forms/ReturnModal';
 import RefundModal from '../components/forms/RefundModal';
 import PurchaseBillModal from '../components/forms/PurchaseBillModal';
 import DeletePartyModal from '../components/forms/DeletePartyModal';
+import DeleteReturnConfirm from '../components/forms/DeleteReturnConfirm';
 import SupplierPaymentModal from '../components/forms/SupplierPaymentModal';
 import BillReceiptModal from '../components/BillReceiptModal';
 import {
@@ -111,6 +113,9 @@ function PartyLedgerView({ onRelock }) {
   // of the khata off against the other.
   const [buyOpen, setBuyOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [delReturnId, setDelReturnId] = useState(null);
+  // A cheque about to be marked cleared or bounced: { id, newStatus }
+  const [chqAction, setChqAction] = useState(null);
   const [payThemOpen, setPayThemOpen] = useState(false);
   const [setOffOpen, setSetOffOpen] = useState(false);
   const [delSupPayFor, setDelSupPayFor] = useState(null);
@@ -178,7 +183,9 @@ function PartyLedgerView({ onRelock }) {
   // One account payment over several bills is one line; opening it lists its
   // parts underneath, each with its own edit and delete.
   const [openGroups, setOpenGroups] = useState({});
-  const displayRows = useMemo(() => shown.flatMap((e) => (
+  // Newest entry first on screen. Each line keeps the running balance it was given in date order,
+  // so the top line is where the account stands now; Excel, PDF and Print stay oldest-first.
+  const displayRows = useMemo(() => [...shown].reverse().flatMap((e) => (
     e.parts && openGroups[e.id]
       ? [e, ...e.parts.map((x) => ({ ...x, isPart: true }))]
       : [e]
@@ -517,6 +524,10 @@ function PartyLedgerView({ onRelock }) {
                                       onClick={() => setReceiptFor(e.billId)}
                                       title="Open bill receipt" />
                             )}
+                            {e.type === 'return' && e.returnId && (
+                              <Button size="sm" icon={Trash2} onClick={() => setDelReturnId(e.returnId)}
+                                      title="Delete this return permanently" />
+                            )}
                             {/* A return from a bill they had paid leaves them a minus until the money goes back. */}
                             {e.type === 'return' && refundableOf(e.billId) > 0.004 && (
                               <Button size="sm" icon={Banknote}
@@ -549,6 +560,19 @@ function PartyLedgerView({ onRelock }) {
                                           ? 'Delete this advance'
                                           : 'Delete this payment'} />
                               </>
+                            )}
+                            {/* The bank's answer on a cheque: cleared (it is money now) or bounced
+                                (the bill reopens). Offered on every cheque line except one whose
+                                payment was reversed. */}
+                            {e.chequeId && !e.reversed && e.chequeStatus !== 'cleared' && (
+                              <Button size="sm" icon={CheckCircle2}
+                                      onClick={() => setChqAction({ id: e.chequeId, newStatus: 'cleared' })}
+                                      title="The bank paid this cheque">Clear</Button>
+                            )}
+                            {e.chequeId && !e.reversed && e.chequeStatus !== 'bounced' && (
+                              <Button size="sm" icon={XCircle}
+                                      onClick={() => setChqAction({ id: e.chequeId, newStatus: 'bounced' })}
+                                      title="The bank returned this cheque">Bounce</Button>
                             )}
                             {/* Deleting the cheque leaves the payment itself
                                 intact, so it is offered separately. */}
@@ -626,6 +650,12 @@ function PartyLedgerView({ onRelock }) {
                             View bill
                           </Button>
                         )}
+                        {e.type === 'return' && e.returnId && (
+                          <Button size="sm" icon={Trash2}
+                                  onClick={(ev) => { ev.stopPropagation(); setDelReturnId(e.returnId); }}>
+                            Delete return
+                          </Button>
+                        )}
                         {e.type === 'return' && refundableOf(e.billId) > 0.004 && (
                           <Button size="sm" icon={Banknote}
                                   onClick={(ev) => { ev.stopPropagation(); setRefundFor(bills.find((b) => b.id === e.billId)); }}>
@@ -647,6 +677,18 @@ function PartyLedgerView({ onRelock }) {
                               Delete
                             </Button>
                           </>
+                        )}
+                        {e.chequeId && !e.reversed && e.chequeStatus !== 'cleared' && (
+                          <Button size="sm" icon={CheckCircle2}
+                                  onClick={(ev) => { ev.stopPropagation(); setChqAction({ id: e.chequeId, newStatus: 'cleared' }); }}>
+                            Clear
+                          </Button>
+                        )}
+                        {e.chequeId && !e.reversed && e.chequeStatus !== 'bounced' && (
+                          <Button size="sm" icon={XCircle}
+                                  onClick={(ev) => { ev.stopPropagation(); setChqAction({ id: e.chequeId, newStatus: 'bounced' }); }}>
+                            Bounce
+                          </Button>
                         )}
                         {e.chequeId && (
                           <Button size="sm" icon={Ban}
@@ -1069,6 +1111,35 @@ function PartyLedgerView({ onRelock }) {
         open={Boolean(returnFor)} onClose={() => setReturnFor(null)}
         bill={returnFor} party={party}
       />
+
+      {(() => {
+        const chq = chqAction ? data.cheques.find((c) => c.id === chqAction.id) : null;
+        const sib = chq ? chequeSiblings(data.cheques, chq) : [];
+        const bounce = chqAction?.newStatus === 'bounced';
+        return (
+          <Confirm
+            open={Boolean(chq)}
+            danger={bounce}
+            title={bounce ? 'Mark cheque as bounced?' : 'Mark cheque as cleared?'}
+            confirmLabel={bounce ? 'Mark bounced' : 'Mark cleared'}
+            message={chq ? ((bounce
+              ? `Cheque ${chq.chequeNo || ''} for ${money(chq.amount)} will be marked Bounced. The bill's due balance reopens and ${party.name} owes it again.`
+              : `Cheque ${chq.chequeNo || ''} for ${money(chq.amount)} will be marked Cleared and counts as money received.`)
+              + (sib.length > 1
+                ? ` This cheque is split across ${sib.length} bills (${money(sib.reduce((t, c) => t + (Number(c.amount) || 0), 0))} in total); all of them change together.`
+                : '')) : ''}
+            onCancel={() => setChqAction(null)}
+            onConfirm={async () => {
+              const target = chqAction;
+              setChqAction(null);
+              await mutate(() => api.setChequeStatus(target.id, target.newStatus),
+                `Cheque ${chq.chequeNo || ''} marked ${target.newStatus}`).catch(() => {});
+            }}
+          />
+        );
+      })()}
+
+      <DeleteReturnConfirm returnId={delReturnId} onClose={() => setDelReturnId(null)} />
 
       <DeletePartyModal open={deleteOpen} party={party} onClose={() => setDeleteOpen(false)}
                         onDeleted={() => nav('/parties')} />

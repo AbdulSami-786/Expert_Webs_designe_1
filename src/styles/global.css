@@ -1011,6 +1011,7 @@ tr.age-30 { background: #FEF2F260; }
   background: #FDECE6; padding: 2px 6px; border-radius: 999px;
 }
 .item-tile .pr .cost { font-size: 12.5px; color: var(--text-muted); font-weight: 600; }
+.item-tile .pr .lbl { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); align-self: center; }
 
 .item-tile .chips { display: flex; flex-wrap: wrap; gap: 5px; min-height: 22px; }
 .item-tile .chip-s {
@@ -1038,6 +1039,37 @@ tr.age-30 { background: #FEF2F260; }
 .item-tile:hover .add { background: var(--accent); transform: scale(1.08); }
 .item-tile.on .add { background: var(--accent); }
 
+/* minus beside the plus: one less of this item on the bill */
+.item-tile .steps { display: flex; align-items: center; gap: 6px; flex: none; }
+.item-tile .minus {
+  width: 30px; height: 30px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; padding: 0; cursor: pointer;
+  background: var(--surface); color: var(--accent); border: 1.5px solid var(--accent);
+  transition: background var(--t), color var(--t), transform var(--t), opacity var(--t);
+}
+.item-tile .minus:hover:not(:disabled) { background: var(--accent); color: #fff; transform: scale(1.08); }
+.item-tile .minus:disabled { opacity: .3; cursor: default; border-color: var(--border-strong); color: var(--text-muted); }
+
+/* Right-hand panel: the items on the bill, before the payment */
+.side-items { display: flex; flex-direction: column; max-height: 230px; overflow-y: auto; margin: -4px -2px; padding: 0 2px; scrollbar-width: thin; }
+.side-item {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto 22px; align-items: center; gap: 8px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.side-item:last-child { border-bottom: 0; }
+.side-item .si-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-item .si-sub { font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-item .si-qty { display: flex; align-items: center; gap: 5px; }
+.side-item .si-qty span { min-width: 22px; text-align: center; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+.side-item .si-qty button {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; padding: 0; cursor: pointer;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border-strong);
+}
+.side-item .si-qty button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.side-item .si-amt { font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; min-width: 64px; }
+.side-item .si-x { background: none; border: 0; padding: 0; cursor: pointer; color: var(--danger); display: grid; place-items: center; opacity: .6; }
+.side-item .si-x:hover { opacity: 1; }
+
 /* "× 2" corner badge when the item is already on this bill */
 .item-tile .inbill {
   position: absolute; top: 9px; right: 9px; z-index: 1;
@@ -1060,3 +1092,21 @@ tr.age-30 { background: #FEF2F260; }
 /* New Bill: a line shows its item's name (no search box) until "Change" is pressed */
 .line-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 36px; }
 .line-name-text { font-weight: 650; font-size: 14px; }
+
+/* ---- Return form: one row per item on the bill ---- */
+.return-rows { display: flex; flex-direction: column; gap: 8px; }
+.return-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 104px 84px; gap: 12px; align-items: start;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface);
+  transition: border-color var(--t), background var(--t);
+}
+.return-row.on { border-color: var(--accent); background: #FFF8F5; }
+.return-row .rr-name { font-weight: 600; font-size: 14px; }
+.return-row .rr-stock { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; cursor: pointer; }
+.return-row .rr-stock input { width: 15px; height: 15px; accent-color: var(--accent); }
+.return-row .rr-val { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; padding-top: 9px; }
+.return-row .err-text { color: var(--danger); font-weight: 600; }
+@media (max-width: 640px) {
+  .return-row { grid-template-columns: minmax(0, 1fr) 92px; }
+  .return-row .rr-val { grid-column: 1 / -1; text-align: left; padding-top: 0; }
+}

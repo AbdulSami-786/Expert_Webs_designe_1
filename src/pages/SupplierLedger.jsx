@@ -88,10 +88,13 @@ export default function SupplierLedger() {
   // One search over both lists: a bill matches on its number, invoice, note,
   // date, amounts or any item on it; a ledger entry on its text or amounts.
   const term = norm(q);
+  // Newest purchase first on screen (the list itself stays oldest-first for working out which
+  // bill a payment settles).
   const shownBills = useMemo(() => {
-    if (!term) return bills;
+    const newestFirst = [...bills].reverse();
+    if (!term) return newestFirst;
     const nameOf = (itemId) => data.items.find((i) => i.id === itemId)?.name || '';
-    return bills.filter((b) => norm([
+    return newestFirst.filter((b) => norm([
       b.purchaseNo, b.invoiceNo, b.note, b.voidReason, fmtDate(b.date), b.date, b.total, b.due,
       ...purchaseBillLines(b.id, data).map((l) => `${nameOf(l.itemId)} ${l.qty} ${l.costPrice}`),
     ].filter((v) => v !== undefined && v !== null).join(' ')).includes(term));
@@ -530,7 +533,8 @@ export default function SupplierLedger() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {/* newest entry first; each line keeps its running balance from date order */}
+                {[...rows].reverse().map((r) => (
                   <tr key={r.id} style={r.voided ? { opacity: 0.55 } : undefined}
                       className={(r.side === 'sale' && r.billId) || r.purchaseBillId ? 'clickable' : ''}
                       onClick={() => {

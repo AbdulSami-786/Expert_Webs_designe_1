@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Printer, Send, Plus, RotateCcw, Pencil, Ban, Undo2, ArrowLeft, Receipt,
-  Truck, PackageOpen, FileDown, ListChecks, Files,
+  Truck, PackageOpen, FileDown, ListChecks, Files, Trash2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
@@ -13,21 +13,29 @@ import {
 } from '../components/ui';
 import PaymentModal from '../components/forms/PaymentModal';
 import ReturnModal from '../components/forms/ReturnModal';
+import DeleteReturnConfirm from '../components/forms/DeleteReturnConfirm';
+import DeleteBillModal from '../components/forms/DeleteBillModal';
 import RefundModal from '../components/forms/RefundModal';
 import LineDeliveryModal, { DeliveredCount } from '../components/forms/LineDeliveryModal';
 import { deriveBills, billDelivery, lineDeliveredQty, installmentStatus, partyUnappliedCredit } from '../lib/calc';
 import { money, fmtDate, fmtDateTime, waLink, totalQtyLabel, r2 } from '../lib/format';
 import { printBill, downloadBillPDF } from '../lib/exporters';
 
+// Newest entry first (the last one recorded on a day comes before the earlier ones).
+const newestFirst = (list) => [...list].reverse()
+  .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
 export default function BillView() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { data, settings, mutate } = useApp();
+  const { data, settings, mutate, isAdmin } = useApp();
 
   const [payOpen, setPayOpen] = useState(false);
   const [retOpen, setRetOpen] = useState(false);
+  const [delReturnId, setDelReturnId] = useState(null);
   const [deliverOpen, setDeliverOpen] = useState(false);
   const [voidOpen, setVoidOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
   const [reverseFor, setReverseFor] = useState(null);
   const [reverseReason, setReverseReason] = useState('');
@@ -61,12 +69,12 @@ export default function BillView() {
   const delivery = useMemo(() => billDelivery(bill, data.billItems), [bill, data.billItems]);
 
   const payments = useMemo(
-    () => (bill ? data.payments.filter((p) => p.billId === bill.id) : []),
+    () => (bill ? newestFirst(data.payments.filter((p) => p.billId === bill.id)) : []),
     [bill, data.payments]
   );
 
   const returns = useMemo(
-    () => (bill ? data.returns.filter((r) => r.billId === bill.id) : []),
+    () => (bill ? newestFirst(data.returns.filter((r) => r.billId === bill.id)) : []),
     [bill, data.returns]
   );
 
@@ -191,6 +199,10 @@ export default function BillView() {
             <Button icon={RotateCcw} onClick={() => setRetOpen(true)}>Return</Button>
             <Button icon={Pencil} onClick={() => nav(`/bill/${bill.id}/edit`)}>Edit</Button>
             <Button icon={Ban} onClick={() => setVoidOpen(true)}>Void</Button>
+            {isAdmin && (
+              <Button variant="danger" icon={Trash2} onClick={() => setDeleteOpen(true)}
+                      title="Delete this bill and everything on it for good">Delete</Button>
+            )}
             {state.due > 0 && (
               <Button variant="primary" icon={Plus} onClick={() => setPayOpen(true)}>Add Payment</Button>
             )}
@@ -395,7 +407,7 @@ export default function BillView() {
                 <table className="tbl">
                   <thead>
                     <tr><th>Date</th><th>Item</th><th className="r">Qty</th>
-                        <th>Restocked</th><th>Note</th><th className="r">Refunded</th><th className="r">Value</th></tr>
+                        <th>Restocked</th><th>Note</th><th className="r">Refunded</th><th className="r">Value</th><th></th></tr>
                   </thead>
                   <tbody>
                     {returns.map((r) => (
@@ -411,6 +423,12 @@ export default function BillView() {
                             : <span className="muted">—</span>}
                         </td>
                         <td className="r strong"><Money value={r.valueAdjusted} /></td>
+                        <td style={{ width: 36 }}>
+                          <button className="btn btn-ghost btn-icon" title="Delete this return"
+                                  aria-label="Delete this return" onClick={() => setDelReturnId(r.id)}>
+                            <Trash2 size={14} color="var(--danger)" />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -506,6 +524,8 @@ export default function BillView() {
                     bill={bill} state={state} party={party} />
 
       <RefundModal open={refundOpen} onClose={() => setRefundOpen(false)} bill={bill} party={party} max={refundDue} />
+      <DeleteReturnConfirm returnId={delReturnId} onClose={() => setDelReturnId(null)} />
+
       <ReturnModal open={retOpen} onClose={() => setRetOpen(false)}
                    bill={bill} party={party} />
 
@@ -515,6 +535,9 @@ export default function BillView() {
                            id: l.id, name: l.itemName, qty: Number(l.qty) || 0, unit: l.unit, done: l.delivered,
                          }))}
                          onSave={saveLineDelivery} />
+
+      <DeleteBillModal open={deleteOpen} bill={bill} onClose={() => setDeleteOpen(false)}
+                       onDeleted={() => nav('/bills')} />
 
       {/* Void with reason */}
       <Modal open={voidOpen} title="Void this bill?" onClose={() => setVoidOpen(false)}

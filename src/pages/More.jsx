@@ -84,9 +84,11 @@ export default function More() {
 
       {/* Quick actions */}
       <div className="row mb-2" style={{ gap: 8 }}>
-        <Button icon={CalendarCheck} style={{ flex: 1 }} onClick={() => setCloseToday(true)}>
-          Close Today
-        </Button>
+        {isAdmin && (
+          <Button icon={CalendarCheck} style={{ flex: 1 }} onClick={() => setCloseToday(true)}>
+            Close Today
+          </Button>
+        )}
         {isAdmin && (
           <Button icon={Download} style={{ flex: 1 }}
                   onClick={() => { downloadBackup(data, settings.shopName); toast('Backup downloaded'); }}>
@@ -127,7 +129,7 @@ export default function More() {
         </Card>
       </div>
 
-      <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />
+      {isAdmin && <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />}
     </>
   );
 }
