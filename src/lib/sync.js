@@ -49,6 +49,7 @@ export const SYNC_TABS = [
   ['stockLoss', 'StockLoss'],
   ['supplierPayments', 'SupplierPayments'],
   ['supplierReturns', 'SupplierReturns'],
+  ['investments', 'Investments'],
   // Last, so a log entry never reaches the Sheet ahead of what it describes.
   // Not in localAdapter's SYNCED_KEYS: the log is append-only, so it never
   // needs a deletion recorded.

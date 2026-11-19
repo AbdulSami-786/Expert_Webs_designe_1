@@ -28,7 +28,7 @@ import { downloadBackup } from '../lib/exporters';
 import CloseTodayModal from '../components/CloseTodayModal';
 
 export default function Dashboard() {
-  const { data, settings, methods, toast, isAdmin } = useApp();
+  const { data, settings, methods, toast, isAdmin, can } = useApp();
   const nav = useNavigate();
   const [preset, setPreset] = useState('month');
   const [custom, setCustom] = useState({ from: '', to: '' });
@@ -189,7 +189,7 @@ export default function Dashboard() {
       {/* Mobile-only quick actions */}
       <div className="hide-mobile" style={{ display: 'none' }} />
       <div className="row hide-desktop mb-2" style={{ gap: 8 }}>
-        {isAdmin && (
+        {can('close-today') && (
           <Button icon={CalendarCheck} onClick={() => setCloseToday(true)} style={{ flex: 1 }}>Close Today</Button>
         )}
         {isAdmin && (
@@ -470,7 +470,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {isAdmin && <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />}
+      {can('close-today') && <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />}
     </>
   );
 }

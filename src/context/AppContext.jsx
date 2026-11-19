@@ -26,7 +26,7 @@ const EMPTY = {
   bills: [], billItems: [], payments: [], returns: [],
   cheques: [], partyAdvances: [], purchases: [],
   employees: [], employeeTx: [],
-  expenses: [], stockLoss: [], assets: [],
+  expenses: [], stockLoss: [], assets: [], investments: [],
   activityLog: [], partyLedgerLinks: [],
   suppliers: [], purchaseBills: [], supplierPayments: [], supplierReturns: [],
   settings: {
@@ -192,7 +192,7 @@ export function AppProvider({ children }) {
       addRefund: 'The refund', saveParty: 'The party', saveItem: 'The item', savePurchaseBill: 'The purchase',
       savePurchase: 'The purchase', saveSupplier: 'The supplier', addSupplierPayment: 'The supplier payment',
       saveExpense: 'The expense', saveEmployee: 'The employee', addEmployeeTx: 'The entry',
-      saveAsset: 'The asset', saveStockLoss: 'The stock loss', saveCheque: 'The cheque',
+      saveAsset: 'The asset', saveInvestment: 'The investment', saveStockLoss: 'The stock loss', saveCheque: 'The cheque',
       addAdvance: 'The advance', voidBill: 'Cancelling the bill',
     };
 

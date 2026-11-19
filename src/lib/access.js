@@ -28,6 +28,7 @@ export const PAGE_GROUPS = [
       { key: 'suppliers',   label: 'Suppliers',   to: '/suppliers' },
       { key: 'outstanding', label: 'Outstanding', to: '/outstanding' },
       { key: 'ledger-book', label: 'Ledger Book', to: '/ledger-book' },
+      { key: 'installments', label: 'Installment Entry', to: '/installments' },
     ],
   },
   {
@@ -37,6 +38,7 @@ export const PAGE_GROUPS = [
       { key: 'accounts', label: 'Accounts', to: '/accounts' },
       { key: 'expenses', label: 'Expenses', to: '/expenses' },
       { key: 'assets',   label: 'Assets',   to: '/assets' },
+      { key: 'investments', label: 'Investments', to: '/investments' },
     ],
   },
   {
@@ -63,10 +65,21 @@ export const PAGE_GROUPS = [
       { key: 'settings', label: 'Settings', to: '/settings' },
     ],
   },
+  {
+    // Not pages — buttons. They have no `to`; a user sees the button only if ticked.
+    label: 'Actions',
+    pages: [
+      { key: 'close-today', label: 'Close Today button' },
+    ],
+  },
 ];
 
-export const ALL_PAGES = PAGE_GROUPS.flatMap((g) => g.pages);
+const EVERY_ITEM = PAGE_GROUPS.flatMap((g) => g.pages);
+/** Real pages only (they have a route). */
+export const ALL_PAGES = EVERY_ITEM.filter((p) => p.to);
 export const ALL_PAGE_KEYS = ALL_PAGES.map((p) => p.key);
+/** Pages plus action permissions — everything that can be ticked in User Management. */
+export const ALL_ACCESS_KEYS = EVERY_ITEM.map((p) => p.key);
 
 /**
  * Route -> page key (or a list of keys, any one of which is enough).
@@ -92,10 +105,12 @@ const ROUTE_RULES = [
   [/^\/purchase\/[^/]+$/,     ['purchases', 'suppliers']],
   [/^\/outstanding(\/|$)/,    'outstanding'],
   [/^\/ledger-book(\/|$)/,    'ledger-book'],
+  [/^\/installments(\/|$)/,   'installments'],
   [/^\/cheques(\/|$)/,        'cheques'],
   [/^\/accounts?(\/|$)/,      'accounts'],
   [/^\/expenses(\/|$)/,       'expenses'],
   [/^\/assets(\/|$)/,         'assets'],
+  [/^\/investments(\/|$)/,    'investments'],
   [/^\/items(\/|$)/,          'items'],
   [/^\/sold-out(\/|$)/,       'items'],   // same permission as Items
   [/^\/purchases?(\/|$)/,     'purchases'],

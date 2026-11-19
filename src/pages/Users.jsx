@@ -14,7 +14,7 @@ import api from '../lib/api';
 import {
   Card, Button, Modal, Confirm, Empty, PageHead, SearchBar, Pill, Field, Input, Select, Skeleton,
 } from '../components/ui';
-import { PAGE_GROUPS, ALL_PAGE_KEYS } from '../lib/access';
+import { PAGE_GROUPS, ALL_PAGE_KEYS, ALL_ACCESS_KEYS } from '../lib/access';
 import { fmtDate, norm } from '../lib/format';
 
 export default function Users() {
@@ -64,7 +64,8 @@ export default function Users() {
 
   const pagesLabel = (u) => (u.role === 'admin'
     ? 'All pages'
-    : `${u.allowedPages.length} of ${ALL_PAGE_KEYS.length} pages`);
+    : `${u.allowedPages.filter((k) => ALL_PAGE_KEYS.includes(k)).length} of ${ALL_PAGE_KEYS.length} pages${
+      u.allowedPages.includes('close-today') ? ' · Close Today' : ''}`);
 
   const actionButtons = (u) => (
     <>
@@ -220,7 +221,7 @@ function UserForm({ user, isSelf, onSaved, onCancel }) {
     g.pages.forEach((p) => (all ? s.delete(p.key) : s.add(p.key)));
     return { ...x, allowedPages: [...s] };
   });
-  const setAll = (on) => setF((x) => ({ ...x, allowedPages: on ? [...ALL_PAGE_KEYS] : [] }));
+  const setAll = (on) => setF((x) => ({ ...x, allowedPages: on ? [...ALL_ACCESS_KEYS] : [] }));
 
   const submit = async (e) => {
     e.preventDefault();
@@ -229,7 +230,7 @@ function UserForm({ user, isSelf, onSaved, onCancel }) {
       return setErr('Username must be 3–30 characters: letters, numbers, dot, dash or underscore.');
     }
     if (!user && f.password.length < 6) return setErr('Set a password of at least 6 characters.');
-    if (f.role === 'user' && !f.allowedPages.length) {
+    if (f.role === 'user' && !f.allowedPages.some((k) => ALL_PAGE_KEYS.includes(k))) {
       return setErr('Tick at least one page this user may open.');
     }
     setErr('');
@@ -281,7 +282,7 @@ function UserForm({ user, isSelf, onSaved, onCancel }) {
         <div style={{ marginTop: 6 }}>
           <div className="row" style={{ justifyContent: 'space-between', margin: '4px 0 8px' }}>
             <div style={{ fontWeight: 600 }}>
-              Page access <span className="muted small">· {f.allowedPages.length} of {ALL_PAGE_KEYS.length} selected</span>
+              Page access <span className="muted small">· {f.allowedPages.filter((k) => ALL_PAGE_KEYS.includes(k)).length} of {ALL_PAGE_KEYS.length} pages selected</span>
             </div>
             <div className="row" style={{ gap: 6 }}>
               <Button type="button" size="sm" onClick={() => setAll(true)}>Select all</Button>

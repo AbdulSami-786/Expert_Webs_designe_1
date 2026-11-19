@@ -12,7 +12,7 @@ import {
   RotateCcw, Receipt, Wallet, Landmark, BookOpen, Scale, TrendingUp,
   ClipboardList, UserCog, CreditCard, Boxes, ShoppingCart, Building2,
   Settings as SettingsIcon, LogOut, Download, CalendarCheck, Plus,
-  MoreHorizontal, WifiOff, RefreshCw, ScrollText, Truck, ShieldCheck, Lock, PackageX,
+  CalendarClock, PiggyBank, MoreHorizontal, WifiOff, RefreshCw, ScrollText, Truck, ShieldCheck, Lock, PackageX,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Toasts, Button, Skeleton, Empty } from '../ui';
@@ -39,6 +39,7 @@ const NAV = [
       { to: '/suppliers',  icon: Truck,        label: 'Suppliers' },
       { to: '/outstanding',icon: AlertCircle,  label: 'Outstanding', badge: 'due' },
       { to: '/ledger-book',icon: BookOpen,     label: 'Ledger Book' },
+      { to: '/installments',icon: CalendarClock, label: 'Installment Entry' },
     ],
   },
   {
@@ -48,6 +49,7 @@ const NAV = [
       { to: '/accounts',   icon: Landmark,   label: 'Accounts' },
       { to: '/expenses',   icon: Wallet,     label: 'Expenses' },
       { to: '/assets',     icon: Building2,  label: 'Assets' },
+      { to: '/investments',icon: PiggyBank,  label: 'Investments' },
     ],
   },
   {
@@ -198,7 +200,7 @@ export default function Shell() {
           )}
 
           {/* The day's closing figures (cash, sales, dues) are for the owner: admins only. */}
-          {isAdmin && <Button icon={CalendarCheck} onClick={() => setCloseToday(true)}>Close Today</Button>}
+          {can('close-today') && <Button icon={CalendarCheck} onClick={() => setCloseToday(true)}>Close Today</Button>}
           {isAdmin && <Button icon={Download} onClick={onBackup}>Backup</Button>}
           {can('new-bill') && (
             <Button variant="primary" icon={FilePlus2} onClick={() => nav('/bill/new')}>New Bill</Button>
@@ -238,7 +240,7 @@ export default function Shell() {
         ))}
       </nav>
 
-      {isAdmin && <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />}
+      {can('close-today') && <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />}
       <Toasts toasts={toasts} />
     </div>
   );

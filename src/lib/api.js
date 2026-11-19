@@ -177,6 +177,7 @@ const OPTIMISTIC = new Set([
   'addSupplierPayment', 'deleteSupplierPayment', 'addSupplierReturn', 'deleteSupplierReturn',
   'setOffParty',
   'saveEmployee', 'addEmployeeTx', 'saveExpense', 'saveStockLoss', 'saveAsset',
+  'saveInvestment', 'deleteInvestment',
   'saveSettings',
 ]);
 
@@ -612,6 +613,10 @@ export const api = {
   saveExpense:    (e)           => call('saveExpense', e),
   saveStockLoss:  (l)           => call('saveStockLoss', l),
   saveAsset:      (a)           => call('saveAsset', a),
+
+  // Investments — money put into the business (counts as money in, like an opening balance)
+  saveInvestment:   (i)         => call('saveInvestment', i),
+  deleteInvestment: (id)        => call('deleteInvestment', { id }),
 
   // Settings
   saveSettings:   (s)           => call('saveSettings', s),

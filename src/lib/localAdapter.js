@@ -41,7 +41,7 @@ function emptyDb() {
     bills: [], billItems: [], payments: [], returns: [],
     cheques: [], partyAdvances: [], purchases: [],
     employees: [], employeeTx: [],
-    expenses: [], stockLoss: [], assets: [],
+    expenses: [], stockLoss: [], assets: [], investments: [],
     activityLog: [], users: [], partyLedgerLinks: [],
     // The buying side: suppliers, their purchase bills (lines live in
     // `purchases`), payments made to them and goods sent back to them.
@@ -124,7 +124,7 @@ export const SYNCED_KEYS = [
   'parties', 'items', 'employees', 'assets', 'purchases', 'bills', 'billItems',
   'partyItemPrices', 'payments', 'returns', 'cheques', 'partyAdvances',
   'employeeTx', 'expenses', 'stockLoss',
-  'suppliers', 'purchaseBills', 'supplierPayments', 'supplierReturns',
+  'suppliers', 'purchaseBills', 'supplierPayments', 'supplierReturns', 'investments',
 ];
 
 /**
@@ -2424,6 +2424,32 @@ async function perform(action, payload = {}) {
       logActivity(d, 'asset', rec.id, 'create', `Asset added "${rec.name}"`);
       save();
       return rec;
+    }
+
+    /* ---------------- Investments (money put into the business) ---------------- */
+    case 'saveInvestment': {
+      const v = payload;
+      if (!(Number(v.amount) > 0)) throw new Error('Enter an investment amount greater than zero');
+      const rec = {
+        id: uid('inv'), investor: String(v.investor || '').trim(), amount: r2(v.amount),
+        method: v.method || 'Cash', date: v.date || todayISO(), note: v.note || '',
+      };
+      d.investments.push(rec);
+      logActivity(d, 'investment', rec.id, 'create',
+        `Investment ${rec.amount} into ${rec.method}${rec.investor ? ` by ${rec.investor}` : ''}`);
+      save();
+      return rec;
+    }
+
+    case 'deleteInvestment': {
+      const i = d.investments.findIndex((x) => x.id === payload.id);
+      if (i < 0) throw new Error('Investment not found');
+      const inv = d.investments[i];
+      d.investments.splice(i, 1);
+      logActivity(d, 'investment', inv.id, 'delete',
+        `Deleted investment of ${inv.amount} (${inv.method})`, inv, null);
+      save();
+      return { ok: true };
     }
 
     /* ---------------- Settings ---------------- */

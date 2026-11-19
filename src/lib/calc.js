@@ -835,15 +835,20 @@ export function collectedPayments(payments = [], cheques = []) {
  */
 export function accountBalances(methods = [], {
   payments = [], expenses = [], employeeTx = [], cheques = [], supplierPayments = [], returns = [],
+  investments = [],
 } = {}) {
   const pendingOrBounced = new Set(
     cheques.filter((c) => c.status !== 'cleared' && c.paymentId).map((c) => c.paymentId)
   );
 
   return methods.map((m) => {
+    // Customer payments, plus money the owner put into the business on this method.
     const inflow = payments
       .filter((p) => p.method === m && !p.reversed && !pendingOrBounced.has(p.id))
-      .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0)
+      + investments
+        .filter((v) => (v.method || 'Cash') === m)
+        .reduce((s, v) => s + (Number(v.amount) || 0), 0);
 
     // A stock-loss write-off is an expense for the profit figures, but no money
     // left any account: the goods were damaged, not paid for again. Counting it
@@ -874,7 +879,7 @@ export function accountBalances(methods = [], {
 /** Full chronological transaction history for one method, with running balance. */
 export function accountLedger(method, {
   payments = [], expenses = [], employeeTx = [], cheques = [], parties = [], employees = [],
-  supplierPayments = [], suppliers = [], returns = [], bills = [],
+  supplierPayments = [], suppliers = [], returns = [], bills = [], investments = [],
 } = {}) {
   const pending = new Set(
     cheques.filter((c) => c.status !== 'cleared' && c.paymentId).map((c) => c.paymentId)
@@ -893,6 +898,14 @@ export function accountLedger(method, {
           : p.isAdvance ? `Advance from ${partyName(p.partyId)}`
           : `Payment from ${partyName(p.partyId)}`,
       relatedType: p.isOpening ? 'opening' : 'payment', relatedId: p.billId,
+    }));
+
+  investments
+    .filter((v) => (v.method || 'Cash') === method)
+    .forEach((v) => rows.push({
+      id: v.id, date: v.date, direction: 'in', amount: r2(v.amount),
+      desc: `Investment${v.investor ? ` by ${v.investor}` : ''}${v.note ? ` — ${v.note}` : ''}`,
+      relatedType: 'investment', relatedId: v.id,
     }));
 
   expenses
@@ -1053,9 +1066,22 @@ export function auditSummary(data, from, to) {
   };
 }
 
-/** Ledger Book rows: classic debit/credit running balance (FR-42). */
-export function ledgerBook(data, partyId = null, from = null, to = null) {
-  const { bills = [], payments = [], parties = [], returns = [] } = data;
+/**
+ * Ledger Book rows: classic debit/credit running balance (FR-42).
+ *
+ * scope: 'regular' (default) leaves out bills sold on an instalment plan and everything that
+ * belongs to them (their payments, returns and refunds) — those live in the Installment Entry
+ * page; 'installment' lists only those.
+ */
+export function ledgerBook(data, partyId = null, from = null, to = null, scope = 'regular') {
+  const { parties = [] } = data;
+  const allBills = data.bills || [];
+  const instIds = new Set(allBills.filter((b) => parseInstallPlan(b)).map((b) => b.id));
+  const wantInst = scope === 'installment';
+  const keepBill = (billId) => (billId ? instIds.has(billId) === wantInst : !wantInst);
+  const bills = allBills.filter((b) => keepBill(b.id));
+  const payments = (data.payments || []).filter((p) => keepBill(p.billId));
+  const returns = (data.returns || []).filter((r) => keepBill(r.billId));
   const inRange = (d) => {
     const x = new Date(d);
     return (!from || x >= new Date(from)) && (!to || x <= new Date(to + 'T23:59:59'));

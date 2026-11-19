@@ -11,7 +11,11 @@ import { ledgerBook, rangeFor } from '../lib/calc';
 import { money, fmtDate, r2 } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
 
-export default function LedgerBook() {
+// mode 'installment' shows only bills sold on an instalment plan (the Installment Entry page);
+// the normal Ledger Book leaves those out.
+export default function LedgerBook({ mode = 'regular' }) {
+  const inst = mode === 'installment';
+  const pageTitle = inst ? 'Installment Entry' : 'Ledger Book';
   const { data, settings, activeParties, toast } = useApp();
   const [partyId, setPartyId] = useState('');
   const [preset, setPreset] = useState('month');
@@ -20,8 +24,8 @@ export default function LedgerBook() {
   const range = useMemo(() => rangeFor(preset, custom), [preset, custom]);
 
   const rows = useMemo(
-    () => ledgerBook(data, partyId || null, range.from, range.to),
-    [data, partyId, range]
+    () => ledgerBook(data, partyId || null, range.from, range.to, mode),
+    [data, partyId, range, mode]
   );
 
   const totals = useMemo(() => ({
@@ -37,19 +41,19 @@ export default function LedgerBook() {
   const display = useMemo(() => [...rows].reverse(), [rows]);
 
   const onExcel = () => {
-    exportExcel(`LedgerBook_${party ? party.name : 'Business'}`,
+    exportExcel(`${inst ? 'InstallmentEntry' : 'LedgerBook'}_${party ? party.name : 'Business'}`,
       ['Date', 'Reference', 'Party', 'Description', 'Debit', 'Credit', 'Balance'],
       rows.map((r) => [fmtDate(r.date), r.ref, r.party, r.desc,
                        r.debit ? r.debit.toFixed(2) : '',
                        r.credit ? r.credit.toFixed(2) : '',
                        r.balance.toFixed(2)]),
-      [`${settings.shopName} — Ledger Book`, scope,
+      [`${settings.shopName} — ${pageTitle}`, scope,
        `Debit ${money(totals.debit)} · Credit ${money(totals.credit)} · Closing ${money(totals.closing)}`]);
     toast('Ledger book exported');
   };
 
   const onPDF = () => printReport({
-    title: 'Ledger Book', subtitle: scope, shopName: settings.shopName,
+    title: pageTitle, subtitle: scope, shopName: settings.shopName,
     headers: ['Date', 'Ref', 'Party', 'Description',
               { label: 'Debit', align: 'r' }, { label: 'Credit', align: 'r' },
               { label: 'Balance', align: 'r' }],
@@ -60,8 +64,8 @@ export default function LedgerBook() {
 
   return (
     <>
-      <PageHead title="Ledger Book"
-                subtitle={`${scope} · ${rows.length} entries`}>
+      <PageHead title={pageTitle}
+                subtitle={`${scope} · ${rows.length} entries${inst ? ' · bills paid in instalments' : ''}`}>
         <Button icon={Download} onClick={onExcel}>Excel</Button>
         <Button icon={Printer} onClick={onPDF}>PDF</Button>
       </PageHead>
@@ -89,7 +93,9 @@ export default function LedgerBook() {
       <Card tight>
         {!display.length ? (
           <Empty icon={BookOpen} title="No entries in this period"
-                 message="Change the date range or clear the party filter." />
+                 message={inst
+                   ? 'Only bills made with "Pay the credit in instalments" appear here. Change the date range or clear the party filter.'
+                   : 'Change the date range or clear the party filter.'} />
         ) : (
           <>
             <div className="table-wrap hide-mobile">

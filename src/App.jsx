@@ -23,9 +23,11 @@ import Purchases    from './pages/Purchases';
 import Suppliers    from './pages/Suppliers';
 import SupplierLedger from './pages/SupplierLedger';
 import Assets       from './pages/Assets';
+import Investments  from './pages/Investments';
 import Accounts     from './pages/Accounts';
 import AccountLedger from './pages/AccountLedger';
 import LedgerBook   from './pages/LedgerBook';
+import InstallmentEntry from './pages/InstallmentEntry';
 import BalanceSheet from './pages/BalanceSheet';
 import ProfitReport from './pages/ProfitReport';
 import Audit        from './pages/Audit';
@@ -75,9 +77,11 @@ function Router() {
         <Route path="suppliers"         element={<Suppliers />} />
         <Route path="supplier/:id"      element={<SupplierLedger />} />
         <Route path="assets"            element={<Assets />} />
+        <Route path="investments"       element={<Investments />} />
         <Route path="accounts"          element={<Accounts />} />
         <Route path="account/:method"   element={<AccountLedger />} />
         <Route path="ledger-book"       element={<LedgerBook />} />
+        <Route path="installments"      element={<InstallmentEntry />} />
         <Route path="balance-sheet"     element={<BalanceSheet />} />
         <Route path="profit"            element={<ProfitReport />} />
         <Route path="audit"             element={<Audit />} />

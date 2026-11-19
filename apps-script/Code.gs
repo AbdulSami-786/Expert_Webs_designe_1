@@ -78,6 +78,9 @@ var SCHEMA = {
   Expenses: ['id', 'category', 'amount', 'date', 'note', 'method', 'linkedStockLossId'],
   StockLoss: ['id', 'itemId', 'qty', 'reason', 'estimatedValue', 'date', 'note', 'linkedExpenseId'],
   Assets: ['id', 'name', 'value', 'date', 'note'],
+  // Money the owner (or a partner) puts into the business: it counts as money IN on the chosen
+  // payment method, exactly like an opening balance. The tab is created on first use.
+  Investments: ['id', 'investor', 'amount', 'method', 'date', 'note'],
   ActivityLog: ['id', 'entityType', 'entityId', 'action', 'description', 'oldValue',
                 'newValue', 'user', 'timestamp'],
   // fullName/status/allowedPages/createdAt appended (never inserted). role is
@@ -107,6 +110,7 @@ var TAB_TO_KEY = {
   Expenses: 'expenses',
   StockLoss: 'stockLoss',
   Assets: 'assets',
+  Investments: 'investments',
   ActivityLog: 'activityLog',
   PartyLedgerLinks: 'partyLedgerLinks',
   Suppliers: 'suppliers',
@@ -157,8 +161,8 @@ var BOOLEAN = { reversed: 1, restock: 1, active: 1, isAdvance: 1 };
  * missing, the link is still serving an old deployment (saving Code.gs is not enough: it needs
  * Deploy > Manage deployments > pencil > Version: New version > Deploy).
  */
-var BACKEND_VERSION = '1.5.2';
-var BACKEND_FEATURES = ['adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier'];
+var BACKEND_VERSION = '1.6.0';
+var BACKEND_FEATURES = ['adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier', 'investments'];
 
 function doGet(e) {
   return json({
@@ -186,7 +190,7 @@ var ACTING_USER = 'system';
  */
 var REPLAY_GUARDED = {
   saveBill: 1, addPayment: 1, addReturn: 1, addRefund: 1, addAdvance: 1, savePurchase: 1,
-  addEmployeeTx: 1, saveExpense: 1, saveStockLoss: 1, saveAsset: 1,
+  addEmployeeTx: 1, saveExpense: 1, saveStockLoss: 1, saveAsset: 1, saveInvestment: 1,
   saveCheque: 1, settleParty: 1,
   savePurchaseBill: 1, adoptPurchases: 1, addSupplierPayment: 1, addSupplierReturn: 1, saveSupplier: 1,
   setOffParty: 1
@@ -371,6 +375,8 @@ function route(action, p, token) {
     case 'saveExpense':      return saveExpense(p);
     case 'saveStockLoss':    return saveStockLoss(p);
     case 'saveAsset':        return saveAsset(p);
+    case 'saveInvestment':   return saveInvestment(p);
+    case 'deleteInvestment': return deleteInvestment(p);
 
     case 'saveSettings':     return saveSettings(p);
 
@@ -1462,7 +1468,7 @@ function syncPush(p) {
     'PurchaseBills', 'Purchases', 'Bills', 'BillItems', 'PartyItemPrices',
     'Payments', 'Returns', 'Cheques', 'PartyAdvances',
     'EmployeeTransactions', 'Expenses', 'StockLoss',
-    'SupplierPayments', 'SupplierReturns',
+    'SupplierPayments', 'SupplierReturns', 'Investments',
     'ActivityLog'
   ];
 
@@ -4321,6 +4327,37 @@ function saveAsset(p) {
     appendRow('Assets', rec);
     logActivity('asset', rec.id, 'create', 'Asset added "' + rec.name + '"');
     return rec;
+  });
+}
+
+/** Money put into the business. Counts as money in on `method`, like an opening balance. */
+function saveInvestment(p) {
+  return withLock(function () {
+    if (!(Number(p.amount) > 0)) fail('Enter an investment amount greater than zero');
+    var rec = {
+      id: uid('inv'),
+      investor: String(p.investor || '').trim(),
+      amount: r2(p.amount),
+      method: p.method || 'Cash',
+      date: p.date || todayISO(),
+      note: p.note || ''
+    };
+    appendRow('Investments', rec);
+    logActivity('investment', rec.id, 'create',
+      'Investment ' + rec.amount + ' into ' + rec.method + (rec.investor ? ' by ' + rec.investor : ''));
+    return rec;
+  });
+}
+
+/** Remove an investment that was entered by mistake. */
+function deleteInvestment(p) {
+  return withLock(function () {
+    var inv = getById('Investments', p.id);
+    if (!inv) fail('Investment not found');
+    deleteRowById('Investments', p.id);
+    logActivity('investment', p.id, 'delete',
+      'Deleted investment of ' + inv.amount + ' (' + inv.method + ')', inv, null);
+    return { ok: true };
   });
 }
 

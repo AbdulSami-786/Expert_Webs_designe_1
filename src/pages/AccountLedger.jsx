@@ -94,6 +94,7 @@ export default function AccountLedger() {
                                    : r.relatedType === 'expense' ? 'Expense'
                                    : r.relatedType === 'salary' ? 'Salary'
                                    : r.relatedType === 'supplier' ? 'Supplier'
+                                   : r.relatedType === 'investment' ? 'Investment'
                                    : r.relatedType === 'opening' ? 'Opening' : 'Transfer'} />
                       </td>
                       <td className="r">

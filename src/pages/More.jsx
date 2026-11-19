@@ -7,7 +7,7 @@ import {
   Receipt, RotateCcw, Package, ShoppingCart, Boxes, UserCog, Wallet,
   Building2, CreditCard, Landmark, BookOpen, Scale, TrendingUp, ClipboardList,
   ScrollText, Settings as SettingsIcon, LogOut, Download, CalendarCheck,
-  ChevronRight, BookUser, Truck, ShieldCheck, PackageX,
+  CalendarClock, PiggyBank, ChevronRight, BookUser, Truck, ShieldCheck, PackageX,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { canAccessPath } from '../lib/access';
@@ -37,6 +37,7 @@ const GROUPS = [
       { to: '/accounts', icon: Landmark,   label: 'Accounts', desc: 'Balance per payment method' },
       { to: '/expenses', icon: Wallet,     label: 'Expenses', desc: 'Running costs' },
       { to: '/assets',   icon: Building2,  label: 'Assets',   desc: 'Business assets' },
+      { to: '/investments', icon: PiggyBank, label: 'Investments', desc: 'Money put into the business' },
     ],
   },
   {
@@ -54,6 +55,7 @@ const GROUPS = [
     items: [
       { to: '/profit',        icon: TrendingUp,    label: 'Profit Report',  desc: 'By item, party, day' },
       { to: '/ledger-book',   icon: BookOpen,      label: 'Ledger Book',    desc: 'Debit/credit khata' },
+      { to: '/installments',  icon: CalendarClock, label: 'Installment Entry', desc: 'Bills paid in instalments' },
       { to: '/balance-sheet', icon: Scale,         label: 'Balance Sheet',  desc: 'Owns vs owes' },
       { to: '/audit',         icon: ClipboardList, label: 'Audit Summary',  desc: 'Financial health check' },
       { to: '/activity',      icon: ScrollText,    label: 'Activity Log',   desc: 'Every change recorded' },
@@ -70,7 +72,7 @@ const GROUPS = [
 
 export default function More() {
   const nav = useNavigate();
-  const { data, settings, session, me, isAdmin, logout, toast } = useApp();
+  const { data, settings, session, me, isAdmin, can, logout, toast } = useApp();
   const [closeToday, setCloseToday] = useState(false);
 
   // Only the pages this user may open (User Management is super-admin only).
@@ -84,7 +86,7 @@ export default function More() {
 
       {/* Quick actions */}
       <div className="row mb-2" style={{ gap: 8 }}>
-        {isAdmin && (
+        {can('close-today') && (
           <Button icon={CalendarCheck} style={{ flex: 1 }} onClick={() => setCloseToday(true)}>
             Close Today
           </Button>
@@ -129,7 +131,7 @@ export default function More() {
         </Card>
       </div>
 
-      {isAdmin && <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />}
+      {can('close-today') && <CloseTodayModal open={closeToday} onClose={() => setCloseToday(false)} />}
     </>
   );
 }
