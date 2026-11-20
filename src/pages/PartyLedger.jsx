@@ -1036,7 +1036,7 @@ function PartyLedgerView({ onRelock }) {
         }}
       />
 
-      {/* The payment stays: only the bank instrument is removed. */}
+      {/* The payment behind the cheque is deleted along with it. */}
       <Confirm
         open={Boolean(delChequeFor)}
         danger
@@ -1047,8 +1047,8 @@ function PartyLedgerView({ onRelock }) {
           if (!c) return '';
           return `Cheque ${c.chequeNo || '(no number)'}`
             + `${c.bankName ? ` from ${c.bankName}` : ''} for ${money(c.amount)} will be `
-            + 'removed. The payment itself stays and becomes an ordinary '
-            + `${c.status === 'cleared' ? 'cleared ' : ''}payment. This cannot be undone.`;
+            + 'removed, and the payment behind it is deleted too — it disappears from the bill, '
+            + 'ledger and accounts. This cannot be undone.';
         })()}
         onCancel={() => setDelChequeFor(null)}
         onConfirm={async () => {

@@ -161,8 +161,8 @@ var BOOLEAN = { reversed: 1, restock: 1, active: 1, isAdvance: 1 };
  * missing, the link is still serving an old deployment (saving Code.gs is not enough: it needs
  * Deploy > Manage deployments > pencil > Version: New version > Deploy).
  */
-var BACKEND_VERSION = '1.6.0';
-var BACKEND_FEATURES = ['adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier', 'investments'];
+var BACKEND_VERSION = '1.6.1';
+var BACKEND_FEATURES = ['deleteChequePayment','adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier', 'investments'];
 
 function doGet(e) {
   return json({
@@ -2887,19 +2887,48 @@ function updatePayment(p) {
 /**
  * Permanently remove a cheque.
  *
- * The payment it backs is left alone and becomes an ordinary one of its
- * method. That is the point: deleting a cheque record must not quietly erase
- * the money, only the bank instrument attached to it.
+ * The payment it backs is deleted too, so the money disappears everywhere at
+ * once: the bill, the ledger, the account statement and the cash/bank balances.
+ * A cheque that was an advance also removes its PartyAdvances row.
  */
 function deleteCheque(p) {
   return withLock(function () {
     var chq = getById('Cheques', p.id);
     if (!chq) fail('Cheque not found');
+
+    var pay = chq.paymentId ? getById('Payments', chq.paymentId) : null;
+
+    var advId = null;
+    if (pay && pay.isAdvance) {
+      var advs = readAll('PartyAdvances');
+      for (var i = 0; i < advs.length; i++) {
+        var a = advs[i];
+        if (a.partyId === pay.partyId && r2(a.amount) === r2(pay.amount) && a.method === 'Cheque') {
+          if (r2(a.applied) > 0.004) {
+            fail('This cheque was an advance and part of it is already used on bills. ' +
+                 'Delete the advance from the Advances list instead — it reopens those bills properly.');
+          }
+          advId = a.id;
+          break;
+        }
+      }
+    }
+
     deleteRowById('Cheques', p.id);
+    if (pay) {
+      // any other cheque row still pointing at the same payment goes with it
+      readAll('Cheques').forEach(function (c) {
+        if (c.paymentId === pay.id) deleteRowById('Cheques', c.id);
+      });
+      deleteRowById('Payments', pay.id);
+    }
+    if (advId) deleteRowById('PartyAdvances', advId);
+
     logActivity('cheque', p.id, 'delete',
       'Deleted cheque ' + (chq.chequeNo || '') + ' of ' + chq.amount +
+      (pay ? ' and its ' + pay.method + ' payment' : '') +
       (p.reason ? ' — ' + p.reason : ''), chq, null);
-    return { ok: true };
+    return { ok: true, deletedPayment: !!pay };
   });
 }
 

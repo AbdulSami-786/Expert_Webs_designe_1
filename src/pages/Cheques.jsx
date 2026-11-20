@@ -74,10 +74,8 @@ export default function Cheques() {
   /**
    * Remove a cheque record outright.
    *
-   * The payment it backs is deliberately left in place: deleting the bank
-   * instrument must not quietly erase the money. A payment whose cheque is
-   * gone counts as ordinary money of its method, which is why a pending
-   * cheque's bill reads as paid once the record is deleted.
+   * The payment it backs is deleted with it, so the entry disappears from the
+   * bill, ledger book, account statements and balances too.
    */
   const deleteChequeNow = async () => {
     const c = deleteFor;
@@ -307,11 +305,9 @@ export default function Cheques() {
           ? `Cheque ${deleteFor.chequeNo || '(no number)'}`
             + `${deleteFor.bankName ? ` from ${deleteFor.bankName}` : ''}`
             + ` for ${money(deleteFor.amount)} will be removed permanently. `
-            + 'The payment behind it stays and becomes an ordinary payment'
-            + (deleteFor.status !== 'cleared'
-              ? ', so the bill it belongs to will read as paid.'
-              : '.')
-            + ' This cannot be undone.'
+            + 'The payment behind it is deleted too, so it disappears from the bill, '
+            + 'ledger book and accounts, and the bill’s due goes back up. '
+            + 'This cannot be undone.'
           : ''}
         onConfirm={deleteChequeNow}
         onCancel={() => setDeleteFor(null)}

@@ -1625,19 +1625,39 @@ async function perform(action, payload = {}) {
       return c;
     }
 
-    /* The payment the cheque backed is deliberately left in place and becomes
-       an ordinary one of its method: removing the bank instrument must not
-       quietly erase the money itself. */
+    /* Deleting a cheque deletes the payment it backed as well, so the money
+       disappears everywhere at once: the bill, the ledger, the account
+       statement and the cash/bank balances. (A payment left behind would
+       quietly turn into ordinary money of its method.) */
     case 'deleteCheque': {
       const i = d.cheques.findIndex((x) => x.id === payload.id);
       if (i < 0) throw new Error('Cheque not found');
       const chq = d.cheques[i];
+      const pay = chq.paymentId ? d.payments.find((x) => x.id === chq.paymentId) : null;
+
+      // A cheque that was an advance also owns a balance row in PartyAdvances.
+      let advIdx = -1;
+      if (pay && pay.isAdvance) {
+        advIdx = d.partyAdvances.findIndex((a) => a.partyId === pay.partyId
+          && r2(a.amount) === r2(pay.amount) && a.method === 'Cheque');
+        if (advIdx >= 0 && r2(d.partyAdvances[advIdx].applied) > 0.004) {
+          throw new Error('This cheque was an advance and part of it is already used on bills. '
+            + 'Delete the advance from the Advances list instead — it reopens those bills properly.');
+        }
+      }
+
       d.cheques.splice(i, 1);
+      // any other cheque row still pointing at the same payment goes with it
+      if (pay) d.cheques = d.cheques.filter((c) => c.paymentId !== pay.id);
+      if (pay) d.payments = d.payments.filter((x) => x.id !== pay.id);
+      if (advIdx >= 0) d.partyAdvances.splice(advIdx, 1);
+
       logActivity(d, 'cheque', chq.id, 'delete',
         `Deleted cheque ${chq.chequeNo || ''} of ${chq.amount}`
+        + (pay ? ` and its ${pay.method} payment` : '')
         + (payload.reason ? ` — ${payload.reason}` : ''), chq, null);
       save();
-      return { ok: true };
+      return { ok: true, deletedPayment: Boolean(pay) };
     }
 
     /* ---------------- Party advances ---------------- */
