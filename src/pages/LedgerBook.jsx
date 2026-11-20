@@ -94,7 +94,7 @@ export default function LedgerBook({ mode = 'regular' }) {
         {!display.length ? (
           <Empty icon={BookOpen} title="No entries in this period"
                  message={inst
-                   ? 'Only bills made with "Pay the credit in instalments" appear here. Change the date range or clear the party filter.'
+                   ? 'Only instalment bills (made with "Pay the credit in instalments", or numbered INST-00xx) appear here. Change the date range or clear the party filter.'
                    : 'Change the date range or clear the party filter.'} />
         ) : (
           <>

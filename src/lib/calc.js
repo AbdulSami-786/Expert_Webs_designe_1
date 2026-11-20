@@ -738,6 +738,14 @@ export function parseInstallPlan(bill) {
 }
 
 /**
+ * Is this a bill sold on instalments? True when it carries an instalment plan, or when its bill
+ * number is an "INST-00xx" reference (instalment bills entered by hand or imported without a plan).
+ */
+export function isInstallmentBill(bill) {
+  return Boolean(parseInstallPlan(bill)) || /^\s*INST[-\s]?\d/i.test(String(bill?.billNo || ''));
+}
+
+/**
  * Build an equal-parts plan. `credit` is what is left to pay after what was paid
  * at billing (`base`); the last part takes the rounding, so parts add up exactly.
  * interval: 'weekly' | 'fortnight' | 'monthly'.
@@ -1069,14 +1077,14 @@ export function auditSummary(data, from, to) {
 /**
  * Ledger Book rows: classic debit/credit running balance (FR-42).
  *
- * scope: 'regular' (default) leaves out bills sold on an instalment plan and everything that
+ * scope: 'regular' (default) leaves out bills sold on an instalment plan (or numbered INST-00xx) and everything that
  * belongs to them (their payments, returns and refunds) — those live in the Installment Entry
  * page; 'installment' lists only those.
  */
 export function ledgerBook(data, partyId = null, from = null, to = null, scope = 'regular') {
   const { parties = [] } = data;
   const allBills = data.bills || [];
-  const instIds = new Set(allBills.filter((b) => parseInstallPlan(b)).map((b) => b.id));
+  const instIds = new Set(allBills.filter((b) => isInstallmentBill(b)).map((b) => b.id));
   const wantInst = scope === 'installment';
   const keepBill = (billId) => (billId ? instIds.has(billId) === wantInst : !wantInst);
   const bills = allBills.filter((b) => keepBill(b.id));
