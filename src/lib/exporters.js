@@ -96,6 +96,17 @@ export function downloadBackup(data, shopName = 'Expert_Webs_Designs') {
 /* PDF via print                                                       */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Shop logo                                                           */
+/* ------------------------------------------------------------------ */
+
+// public/brand/shop-logo.jpg is the colour mark (PDF, screen); shop-logo-print.png is the same
+// mark as pure black on white, so it prints crisply on a thermal head and does not flood a
+// laser page with a black square.
+const absAsset = (file) => new URL(`brand/${file}`, document.baseURI).href;
+export const logoPrintUrl = () => absAsset('shop-logo-print.png');
+export const logoColorUrl = () => absAsset('shop-logo.jpg');
+
 /**
  * Open a print window containing just the given HTML, styled for paper.
  * Used for bills and for "Export PDF" on report pages — the browser's
@@ -129,6 +140,8 @@ export function printHTML(title, bodyHTML, { css = null, width = 900 } = {}) {
   .head { display: flex; justify-content: space-between; align-items: flex-start;
           border-bottom: 2px solid #111318; padding-bottom: 12px; margin-bottom: 16px; }
   .head .right { text-align: right; }
+  .head .brand { display: flex; align-items: center; gap: 12px; }
+  .head .brand img { width: 52px; height: 52px; }
   table { width: 100%; border-collapse: collapse; margin: 10px 0; }
   th { background: #F3F4F6; text-align: left; padding: 7px 9px; font-size: 10.5px;
        text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid #D1D5DB; }
@@ -210,6 +223,7 @@ function receiptCss(widthMm, { pageMm = widthMm } = {}) {
   /* Thermal printers render grey as a dither pattern that reads as smudged
      dirt, so everything is pure black and borders are dashed rules. */
   .center { text-align: center; }
+  .logo { display: block; margin: 0 auto 3px; width: ${Math.round(widthMm * 0.34)}mm; height: auto; }
   .shop { font-size: ${px(18)}; font-weight: 700; letter-spacing: .02em; word-break: break-word; }
   /* Secondary lines stay bold like everything else; they are set apart by
      size alone, since weight is no longer available to distinguish them. */
@@ -314,6 +328,12 @@ export async function downloadBillPDF({ bill, lines, party, payments, settings, 
   };
 
   /* ---- Shop header ---- */
+  const logo = await loadImageDataUrl(logoColorUrl());
+  if (logo) {
+    const L = 22;
+    doc.addImage(logo, 'JPEG', (W - L) / 2, y - 6, L, L);
+    y += L - 2;
+  }
   set(15, 'bold'); black();
   doc.text(String(settings.shopName || 'Expert Webs Designs'), W / 2, y, { align: 'center' });
   y += 5.5;
@@ -429,6 +449,19 @@ export async function downloadBillPDF({ bill, lines, party, payments, settings, 
   doc.save(`${name}.pdf`);
 }
 
+/** A same-origin image as a data URL for jsPDF; null if it cannot be loaded (the PDF then has no logo). */
+async function loadImageDataUrl(url) {
+  try {
+    const blob = await (await fetch(url)).blob();
+    return await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = rej;
+      r.readAsDataURL(blob);
+    });
+  } catch { return null; }
+}
+
 /**
  * Print a bill.
  *
@@ -497,6 +530,7 @@ function buildSlipHTML({ bill, lines, party, payments, settings, state, delivery
 
   const html = `
     <div class="center">
+      <img class="logo" src="${logoPrintUrl()}" alt="" />
       <div class="shop">${escapeHTML(settings.shopName || 'Expert Webs Designs')}</div>
       ${settings.address ? `<div class="sub">${escapeHTML(settings.address)}</div>` : ''}
       ${settings.phone ? `<div class="sub">${escapeHTML(settings.phone)}</div>` : ''}
@@ -611,9 +645,12 @@ export function printReport({ title, subtitle, shopName, headers, rows, totals =
 
   const html = `
     <div class="head">
-      <div>
-        <h1>${escapeHTML(shopName || 'Expert Webs Designs')}</h1>
-        <div class="muted">${escapeHTML(subtitle || '')}</div>
+      <div class="brand">
+        <img src="${logoPrintUrl()}" alt="" />
+        <div>
+          <h1>${escapeHTML(shopName || 'Expert Webs Designs')}</h1>
+          <div class="muted">${escapeHTML(subtitle || '')}</div>
+        </div>
       </div>
       <div class="right">
         <h1>${escapeHTML(title)}</h1>

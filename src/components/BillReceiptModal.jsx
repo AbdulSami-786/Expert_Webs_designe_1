@@ -77,10 +77,14 @@ export default function BillReceiptModal({
         gap: 16, paddingBottom: 12, marginBottom: 14,
         borderBottom: '2px solid var(--primary)', flexWrap: 'wrap',
       }}>
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <img src={`${import.meta.env.BASE_URL}brand/shop-logo.jpg`} alt=""
+               style={{ width: 44, height: 44, borderRadius: '50%', flex: 'none' }} />
+          <div>
           <div style={{ fontWeight: 700, fontSize: 15 }}>{shopName}</div>
           {party?.name && <div className="small muted">Billed to: {party.name}</div>}
           {party?.phone && <div className="small muted">{party.phone}</div>}
+          </div>
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontWeight: 700, fontSize: 15 }}>{bill.billNo}</div>

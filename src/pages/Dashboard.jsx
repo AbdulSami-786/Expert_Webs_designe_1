@@ -19,7 +19,7 @@ import {
 } from '../components/ui';
 import {
   deriveBills, partyDue, reorderSuggestion, accountBalances, itemStock,
-  rangeFor, inRange, grossProfit, collectedPayments, installmentAlerts,
+  rangeFor, inRange, grossProfit, collectedPayments, installmentAlerts, isInstallmentBill,
 } from '../lib/calc';
 import {
   money, fmtDate, pctChange, waLink, AGING_META, r2, daysOverdue,
@@ -38,6 +38,17 @@ export default function Dashboard() {
 
   const derived = useMemo(() => deriveBills(data.bills, data), [data]);
 
+  // Instalment bills (and their payments) are tracked on the Installment Entry page, so the
+  // Sales / Collected figures on this page leave them out.
+  const instIds = useMemo(
+    () => new Set(data.bills.filter((b) => isInstallmentBill(b)).map((b) => b.id)),
+    [data.bills]
+  );
+  const regularPayments = useMemo(
+    () => collectedPayments(data.payments, data.cheques).filter((p) => !(p.billId && instIds.has(p.billId))),
+    [data.payments, data.cheques, instIds]
+  );
+
   // Instalments overdue or falling due in the next 7 days.
   const instAlerts = useMemo(() => installmentAlerts(derived, 7), [derived]);
 
@@ -46,11 +57,11 @@ export default function Dashboard() {
     const live = derived.filter((b) => b.status !== 'voided');
     const inR = live.filter((b) => inRange(b.date, range.from, range.to));
 
-    const sales = r2(inR.reduce((s, b) => s + b.net, 0));
+    const sales = r2(inR.filter((b) => !instIds.has(b.id)).reduce((s, b) => s + b.net, 0));
 
     // Opening balances are a starting float, not collections from customers.
     const collections = r2(
-      collectedPayments(data.payments, data.cheques)
+      regularPayments
         .filter((p) => inRange(p.date, range.from, range.to))
         .reduce((s, p) => s + (Number(p.amount) || 0), 0)
     );
@@ -67,7 +78,7 @@ export default function Dashboard() {
     const newCredit = r2(inR.reduce((s, b) => s + (b.due > 0 ? b.due : 0), 0));
 
     return { sales, collections, cashInHand, outstanding, profit, newCredit, billCount: inR.length };
-  }, [derived, data, range, methods]);
+  }, [derived, data, range, methods, instIds, regularPayments]);
 
   /* ---------------- This month vs last month (FR-46) ---------------- */
   const comparison = useMemo(() => {
@@ -75,9 +86,9 @@ export default function Dashboard() {
     const lastM = rangeFor('lastMonth');
     const live = derived.filter((b) => b.status !== 'voided');
 
-    const salesIn = (r) => r2(live.filter((b) => inRange(b.date, r.from, r.to)).reduce((s, b) => s + b.net, 0));
+    const salesIn = (r) => r2(live.filter((b) => !instIds.has(b.id) && inRange(b.date, r.from, r.to)).reduce((s, b) => s + b.net, 0));
     const collIn = (r) => r2(
-      collectedPayments(data.payments, data.cheques).filter((p) => inRange(p.date, r.from, r.to))
+      regularPayments.filter((p) => inRange(p.date, r.from, r.to))
         .reduce((s, p) => s + (Number(p.amount) || 0), 0)
     );
     const expIn = (r) => r2(
@@ -95,7 +106,7 @@ export default function Dashboard() {
       { label: 'Expenses',    curr: expIn(thisM),    prev: expIn(lastM) },
       { label: 'Profit',      curr: profitIn(thisM), prev: profitIn(lastM) },
     ].map((x) => ({ ...x, delta: pctChange(x.curr, x.prev) }));
-  }, [derived, data]);
+  }, [derived, data, instIds, regularPayments]);
 
   /* ---------------- Overdue alerts (FR-24) ---------------- */
   const overdue = useMemo(() => {
@@ -164,13 +175,13 @@ export default function Dashboard() {
       const p = (n) => String(n).padStart(2, '0');
       const iso = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
       const total = r2(
-        derived.filter((b) => b.status !== 'voided' && b.date === iso)
+        derived.filter((b) => b.status !== 'voided' && !instIds.has(b.id) && b.date === iso)
           .reduce((s, b) => s + b.net, 0)
       );
       out.push({ date: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }), sales: total });
     }
     return out;
-  }, [derived]);
+  }, [derived, instIds]);
 
   /* ---------------- Recent bills (mobile feed) ---------------- */
   const recent = useMemo(
