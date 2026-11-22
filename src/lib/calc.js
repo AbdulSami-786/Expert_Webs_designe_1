@@ -2134,6 +2134,29 @@ export function partyDeletePlan(partyId, d) {
 }
 
 /**
+ * What deleting a supplier for good takes away: their purchase bills and the stock lines on them
+ * (including older purchase rows that carry only their id), every payment to them and every return
+ * to them. Stock and money are worked out from those records, so removing them reverses both.
+ */
+export function supplierDeletePlan(supplierId, d) {
+  const purchaseBills = (d.purchaseBills || []).filter((b) => b.supplierId === supplierId);
+  const billIds = new Set(purchaseBills.map((b) => b.id));
+  const purchases = (d.purchases || []).filter((x) => x.supplierId === supplierId || billIds.has(x.purchaseBillId));
+  const payments = (d.supplierPayments || []).filter((x) => x.supplierId === supplierId || billIds.has(x.purchaseBillId));
+  const returns = (d.supplierReturns || []).filter((x) => x.supplierId === supplierId || billIds.has(x.purchaseBillId));
+  const live = purchaseBills.filter((b) => b.status !== 'voided');
+  const liveIds = new Set(live.map((b) => b.id));
+  return {
+    purchaseBills, purchases, payments, returns,
+    // stock that leaves again: lines of live (not cancelled) purchases, or older rows without a bill
+    stockOut: purchases
+      .filter((x) => !x.purchaseBillId || liveIds.has(x.purchaseBillId))
+      .reduce((s, x) => s + (Number(x.qty) || 0), 0),
+    paid: r2(payments.reduce((s, x) => s + (Number(x.amount) || 0), 0)),
+  };
+}
+
+/**
  * One running statement covering both sides, oldest first.
  *
  * The sales rows are partyStatement's own. The purchase rows are the linked

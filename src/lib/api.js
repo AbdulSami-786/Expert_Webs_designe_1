@@ -589,6 +589,8 @@ export const api = {
   // Suppliers — the buying side
   saveSupplier:          (s)          => call('saveSupplier', s),
   archiveSupplier:       (id)         => call('archiveSupplier', { id }),
+  // Permanent: an archived supplier with all their purchases, payments and returns. Super admin only.
+  deleteSupplier:        (id)         => call('deleteSupplier', { id }),
   savePurchaseBill:      (b)          => call('savePurchaseBill', b),
   // Move standalone Purchases-page rows into a supplier's purchase bill (stock unchanged).
   adoptPurchases:        (b)          => call('adoptPurchases', b),

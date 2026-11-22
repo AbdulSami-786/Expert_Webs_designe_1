@@ -161,8 +161,8 @@ var BOOLEAN = { reversed: 1, restock: 1, active: 1, isAdvance: 1 };
  * missing, the link is still serving an old deployment (saving Code.gs is not enough: it needs
  * Deploy > Manage deployments > pencil > Version: New version > Deploy).
  */
-var BACKEND_VERSION = '1.6.1';
-var BACKEND_FEATURES = ['deleteChequePayment','adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier', 'investments'];
+var BACKEND_VERSION = '1.7.0';
+var BACKEND_FEATURES = ['deleteSupplier', 'deleteChequePayment','adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier', 'investments'];
 
 function doGet(e) {
   return json({
@@ -357,6 +357,7 @@ function route(action, p, token) {
 
     case 'saveSupplier':          return saveSupplier(p);
     case 'archiveSupplier':       return toggleArchive('Suppliers', p.id, 'supplier');
+    case 'deleteSupplier':        return deleteSupplier(p);
     case 'savePurchaseBill':      return savePurchaseBill(p);
     case 'adoptPurchases':        return adoptPurchases(p);
     case 'voidPurchaseBill':      return voidPurchaseBill(p);
@@ -1902,6 +1903,69 @@ function deleteParty(p) {
       payments.length + ' payment(s) (' + paid + ' paid), ' + returns.length + ' return(s); ' +
       restocked + ' item quantity put back in stock', party, null);
     return info;
+  });
+}
+
+/**
+ * Permanently delete an ARCHIVED supplier with their purchase bills, the stock lines on them (and
+ * older purchase rows carrying only their id), every payment and return. Stock and balances are
+ * worked out from those records, so removing them reverses both. A supplier linked to a party must
+ * be disconnected first. Super admin only. (Mirrors 'deleteSupplier' of the browser adapter.)
+ */
+function deleteSupplier(p) {
+  return withLock(function () {
+    var me = findUserByName(readAll('Users'), ACTING_USER);
+    if (!me || !userIsSuper(me) || !userIsActive(me)) {
+      fail('Only a super admin can permanently delete a supplier.');
+    }
+    var sup = getById('Suppliers', p.id);
+    if (!p.id || !sup) fail('Supplier not found');
+    if (sup.status !== 'archived') fail('Archive the supplier first, then delete them.');
+    if (sup.partyId) fail('This supplier is linked to a party. Disconnect them first.');
+
+    var bills = readAll('PurchaseBills').filter(function (b) { return b.supplierId === sup.id; });
+    var billIds = idSet(bills);
+    var liveIds = {};
+    bills.forEach(function (b) { if (b.status !== 'voided') liveIds[String(b.id)] = 1; });
+
+    var purchases = readAll('Purchases').filter(function (x) {
+      return x.supplierId === sup.id || billIds[String(x.purchaseBillId)];
+    });
+    var payments = readAll('SupplierPayments').filter(function (x) {
+      return x.supplierId === sup.id || billIds[String(x.purchaseBillId)];
+    });
+    var returns = readAll('SupplierReturns').filter(function (x) {
+      return x.supplierId === sup.id || billIds[String(x.purchaseBillId)];
+    });
+
+    var stockOut = 0, paid = 0;
+    purchases.forEach(function (x) {
+      if (!x.purchaseBillId || liveIds[String(x.purchaseBillId)]) stockOut += Number(x.qty) || 0;
+    });
+    payments.forEach(function (x) { paid += Number(x.amount) || 0; });
+    paid = r2(paid);
+
+    deleteRowsByIds('Purchases', idSet(purchases));
+    deleteRowsByIds('PurchaseBills', billIds);
+    deleteRowsByIds('SupplierPayments', idSet(payments));
+    deleteRowsByIds('SupplierReturns', idSet(returns));
+    deleteRowById('Suppliers', sup.id);
+
+    var seen = {};
+    purchases.forEach(function (x) {
+      if (seen[x.itemId]) return;
+      seen[x.itemId] = 1;
+      refreshItemCost(x.itemId);
+    });
+
+    logActivity('supplier', sup.id, 'delete',
+      'Permanently deleted supplier "' + sup.name + '" with ' + bills.length + ' purchase bill(s), ' +
+      payments.length + ' payment(s) (' + paid + '), ' + returns.length + ' return(s); ' +
+      stockOut + ' item quantity taken out of stock', sup, null);
+    return {
+      ok: true, purchaseBills: bills.length, payments: payments.length,
+      returns: returns.length, stockOut: stockOut
+    };
   });
 }
 

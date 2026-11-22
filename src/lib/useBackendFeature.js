@@ -13,6 +13,7 @@ const PROBES = {
   adoptPurchases: () => api.adoptPurchases({}),
   deleteParty: () => api.deleteParty(''),
   deleteBill: () => api.deleteBill(''),
+  deleteSupplier: () => api.deleteSupplier(''),
   purgeEntries: () => api.purgeEntries('', ''),
 };
 

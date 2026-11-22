@@ -22,11 +22,12 @@ export const IS_DESKTOP =
   typeof navigator !== 'undefined' && /\bElectron\//.test(navigator.userAgent || '');
 
 // Your deployed Apps Script Web App URL (the Google Sheet backend).
-// Deployment of Code.gs v1.6.1 (deleting a cheque now also deletes the payment behind it, on top of v1.6.0's
-// Investments and Close Today permission, and v1.5.2's unlinkPartySupplier, deleteParty, deleteBill,
-// deleteReturn, purgeEntries and idHints).
-// Open this link in a browser: it must show version 1.6.1 and list "deleteChequePayment" among the features.
+// Deployment of Code.gs v1.7.0 (deleteSupplier: permanently deleting an archived supplier, on top of v1.6.1's
+// cheque delete also deleting the payment behind it, v1.6.0's Investments and Close Today permission, and
+// v1.5.2's unlinkPartySupplier, deleteParty, deleteBill, deleteReturn, purgeEntries and idHints).
+// Open this link in a browser: it must show version 1.7.0 and list "deleteSupplier" among the features.
 // Earlier deployments, kept for rolling back (they run OLDER code and do not know the newest actions):
+//   https://script.google.com/macros/s/AKfycbypR98tVXDwetlGbbCYS3CQavA_mIki94etKQoE40YW1cnk0CkuH2gDrpPLJyKA0LLtFA/exec   (v1.6.1, before deleteSupplier)
 //   https://script.google.com/macros/s/AKfycbwp__g66hElbpATMJMVPskBahRCw3HkZE1PXhDmsXKuuLQ8eMM0nN_tbdh_kXlUYTp3iw/exec   (v1.6.0, cheque delete leaves the payment)
 //   https://script.google.com/macros/s/AKfycby_hMkFV34qjgjsbqGg9tY1M3Fl0wvzMs3lFkW8uAtUrPapK9NZ0phi9Lh9bOeZgs64Aw/exec   (v1.5.2, before Investments)
 //   https://script.google.com/macros/s/AKfycbxgC26O_m2ftElbBpPAiUVQA-G226cojZ4bTUm4a55eybcEqt78SF5-dGFZcZMKYDMXEA/exec   (v1.5.0, before unlinkPartySupplier)
@@ -36,7 +37,12 @@ export const IS_DESKTOP =
 //   https://script.google.com/macros/s/AKfycbxjiF2Cbu3XRXkWHG6ZJDcdDZ1KkrOF-vuf0R7mR8vF1Y1C9SWTGzGw7gce4aYTKVYrEA/exec
 //   https://script.google.com/macros/s/AKfycbyPkrSO3jOpm8gxqGEI9-IHsdvkJDktnQGnsnPBM1EyDmdzsy7nrTLV1krhyeoBG1Ua/exec
 const SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbypR98tVXDwetlGbbCYS3CQavA_mIki94etKQoE40YW1cnk0CkuH2gDrpPLJyKA0LLtFA/exec';
+  'https://script.google.com/macros/s/AKfycbz2xY4yUIPQzAR8cgJsV6txfGkeiHsmRBx0SsexfuNTra0Y8uhhbOlSfAE792UcfNGLBQ/exec';
+
+// Subscription control. See admin-dashboard/SETUP.md: deploy the license server, add this shop as a
+// client in the Admin Dashboard, then paste the two values here and rebuild.
+const LICENSE_URL = 'https://script.google.com/macros/s/AKfycbxZBOTFk55-kC-_oAYloEypCiEcOKBrVqij5YC2odAhOhORPSK2RPpRUSYTfVtn1R0N/exec';
+const LICENSE_CLIENT_ID = 'c_d4pxtnka';
 
 // Google Sheets sync login. Leave both empty to keep offline-first sync off.
 // Anything written here is compiled into the program, so anyone who has the
@@ -62,6 +68,13 @@ export const CONFIG = {
   backend: (!SCRIPT_URL || (IS_DESKTOP && HAS_SYNC_AUTH)) ? 'local' : 'sheets',
 
   appsScriptUrl: SCRIPT_URL,
+
+  // Monthly-maintenance subscription (admin-dashboard/ controls it).
+  //   licenseUrl      — the deployed LICENSE SERVER Web App (admin-dashboard/license-server/Code.gs)
+  //   licenseClientId — this shop's Client ID, shown in the Admin Dashboard after you add the client
+  // Leave either one empty and the dashboard is never locked (no subscription check at all).
+  licenseUrl: LICENSE_URL,
+  licenseClientId: LICENSE_CLIENT_ID,
 
   // Google Sheets sync credentials (empty = sync off).
   sheetsAuth: {

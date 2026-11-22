@@ -1,6 +1,7 @@
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import Shell from './components/layout/Shell';
+import LicenseGate from './components/LicenseGate';
 
 import Login        from './pages/Login';
 import Dashboard    from './pages/Dashboard';
@@ -47,8 +48,12 @@ function Protected({ children }) {
 
 function Router() {
   const { session } = useApp();
+  const { pathname } = useLocation();
 
   return (
+    // The public shared-ledger page is for the shop's customers, so the shop's subscription
+    // screen must never appear on it.
+    <LicenseGate bypass={pathname.startsWith('/share/')}>
     <Routes>
       {/* Public: password-protected read-only party ledger (FR-21) */}
       <Route path="/share/:token" element={<SharedLedger />} />
@@ -93,6 +98,7 @@ function Router() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </LicenseGate>
   );
 }
 

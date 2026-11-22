@@ -4,7 +4,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Plus, Truck, Pencil, Archive, ArchiveRestore, Phone, ChevronRight, ShoppingCart, Wallet,
+  Plus, Truck, Pencil, Archive, ArchiveRestore, Phone, ChevronRight, ShoppingCart, Wallet, Trash2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
@@ -13,12 +13,14 @@ import {
 } from '../components/ui';
 import SupplierForm from '../components/forms/SupplierForm';
 import PurchaseBillModal from '../components/forms/PurchaseBillModal';
+import DeleteSupplierModal from '../components/forms/DeleteSupplierModal';
 import { supplierNetBalance, deriveBills } from '../lib/calc';
 import { money, norm, r2 } from '../lib/format';
 
 export default function Suppliers() {
-  const { data, mutate } = useApp();
+  const { data, mutate, isAdmin } = useApp();
   const nav = useNavigate();
+  const [deleting, setDeleting] = useState(null);
   const [q, setQ] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -124,6 +126,13 @@ export default function Suppliers() {
                                   onClick={() => setConfirmArchive(s)}>
                             {s.status === 'archived' ? <ArchiveRestore size={14} /> : <Archive size={14} />}
                           </button>
+                          {isAdmin && s.status === 'archived' && (
+                            <button className="btn btn-ghost btn-sm" title="Delete permanently"
+                                    style={{ color: 'var(--danger)' }}
+                                    onClick={() => setDeleting(s)}>
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -146,6 +155,13 @@ export default function Suppliers() {
                     {s.phone && <span><Phone size={12} style={{ verticalAlign: -2 }} /> {s.phone}</span>}
                     <span>{s.purchaseCount} purchase{s.purchaseCount === 1 ? '' : 's'}</span>
                     <span className="spacer" />
+                    {isAdmin && s.status === 'archived' && (
+                      <button className="btn btn-ghost btn-sm" title="Delete permanently"
+                              style={{ color: 'var(--danger)' }}
+                              onClick={(e) => { e.stopPropagation(); setDeleting(s); }}>
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                     <ChevronRight size={15} className="muted" />
                   </div>
                 </div>
@@ -166,6 +182,7 @@ export default function Suppliers() {
       </Modal>
 
       <PurchaseBillModal open={buying} onClose={() => setBuying(false)} />
+      <DeleteSupplierModal open={Boolean(deleting)} supplier={deleting} onClose={() => setDeleting(null)} />
 
       <Confirm
         open={Boolean(confirmArchive)}

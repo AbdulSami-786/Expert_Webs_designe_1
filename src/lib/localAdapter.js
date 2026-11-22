@@ -9,7 +9,7 @@ import { CONFIG, DEFAULT_METHODS } from './config';
 import { uid, todayISO, r2, addDays, captureIds } from './format';
 import {
   billTotals, billState, billPaymentRoom, lineDeliveredQty, lineReceivedQty, supplierBalance,
-  partyDeletePlan, billDeletePlan, purgePlan,
+  partyDeletePlan, supplierDeletePlan, billDeletePlan, purgePlan,
 } from './calc';
 
 const DB_KEY = 'ewd_db_v1';
@@ -1943,6 +1943,37 @@ async function perform(action, payload = {}) {
         `${s.status === 'archived' ? 'Archived' : 'Restored'} supplier "${s.name}"`);
       save();
       return s;
+    }
+
+    /* Permanently remove an ARCHIVED supplier with their purchase bills, the stock lines on them,
+       every payment and return. Stock and money are derived from those records, so removing them
+       reverses both. A supplier linked to a party must be disconnected first. Super admin only. */
+    case 'deleteSupplier': {
+      const me = sessionUser(d);
+      if (!me || !isSuper(me) || !isActiveUser(me)) {
+        throw new Error('Only a super admin can permanently delete a supplier.');
+      }
+      const s = d.suppliers.find((x) => x.id === payload.id);
+      if (!s) throw new Error('Supplier not found');
+      if (s.status !== 'archived') throw new Error('Archive the supplier first, then delete them.');
+      if (s.partyId) throw new Error('This supplier is linked to a party. Disconnect them first.');
+
+      const plan = supplierDeletePlan(s.id, d);
+      const drop = (key, arr) => { const g = new Set(arr.map((x) => x.id)); d[key] = d[key].filter((x) => !g.has(x.id)); };
+      drop('purchases', plan.purchases); drop('purchaseBills', plan.purchaseBills);
+      drop('supplierPayments', plan.payments); drop('supplierReturns', plan.returns);
+      d.suppliers = d.suppliers.filter((x) => x.id !== s.id);
+      new Set(plan.purchases.map((x) => x.itemId)).forEach((itemId) => refreshItemCost(d, itemId));
+
+      logActivity(d, 'supplier', s.id, 'delete',
+        `Permanently deleted supplier "${s.name}" with ${plan.purchaseBills.length} purchase bill(s), `
+        + `${plan.payments.length} payment(s) (${plan.paid}), ${plan.returns.length} return(s); `
+        + `${plan.stockOut} item quantity taken out of stock`, s, null);
+      save();
+      return {
+        ok: true, purchaseBills: plan.purchaseBills.length, payments: plan.payments.length,
+        returns: plan.returns.length, stockOut: plan.stockOut,
+      };
     }
 
     /* A party who also sells to the shop. Their buying side is an ordinary

@@ -9,7 +9,7 @@ import {
   Card, Button, Modal, Empty, PageHead, SearchBar, Money, Pill, Field, Input,
   Select, Stat, RangePicker, Textarea,
 } from '../components/ui';
-import { rangeFor, inRange } from '../lib/calc';
+import { rangeFor, inRange, supplierNetBalance, deriveBills } from '../lib/calc';
 import { money, fmtDate, norm, todayISO, r2 } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
 import { EXPENSE_CATEGORIES } from '../lib/config';
@@ -45,6 +45,21 @@ export default function Expenses() {
     rows.forEach((e) => m.set(e.category, r2((m.get(e.category) || 0) + (Number(e.amount) || 0))));
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [rows]);
+
+  // Every supplier with what is owed each way (the same net figure as on Suppliers). Archived
+  // suppliers only show while they still carry a balance.
+  const supplierRows = useMemo(() => {
+    const derived = deriveBills(data.bills, data);
+    return (data.suppliers || [])
+      .map((s) => ({ id: s.id, name: s.name, status: s.status, balance: supplierNetBalance(s.id, data, derived) }))
+      .filter((s) => s.status !== 'archived' || Math.abs(s.balance) > 0.004)
+      .sort((a, b) => b.balance - a.balance || a.name.localeCompare(b.name));
+  }, [data]);
+
+  const owed = useMemo(
+    () => r2(supplierRows.reduce((s, x) => s + Math.max(0, x.balance), 0)), [supplierRows]);
+  const advance = useMemo(
+    () => r2(supplierRows.reduce((s, x) => s + Math.max(0, -x.balance), 0)), [supplierRows]);
 
   const onExcel = () => {
     exportExcel('Expenses',
@@ -135,6 +150,7 @@ export default function Expenses() {
           )}
         </Card>
 
+        <div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
         <Card title="By Category" tight>
           {byCategory.length ? (
             <div className="table-wrap">
@@ -163,6 +179,38 @@ export default function Expenses() {
             <Empty title="Nothing to summarise" message="Add an expense to see the breakdown." />
           )}
         </Card>
+
+        <Card title="Suppliers & Total" tight>
+          {supplierRows.length ? (
+            <div className="table-wrap">
+              <table className="tbl">
+                <tbody>
+                  {supplierRows.map((s) => (
+                    <tr key={s.id}>
+                      <td>{s.name}{s.status === 'archived' && <span className="small muted"> (archived)</span>}</td>
+                      <td className="r strong">
+                        {s.balance > 0.004
+                          ? <span className="money neg">{money(s.balance)}</span>
+                          : s.balance < -0.004
+                            ? <span className="money pos">{money(-s.balance)} advance</span>
+                            : <span className="muted">Clear</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr><td>You owe suppliers</td><td className="r">{money(owed)}</td></tr>
+                  {advance > 0 && <tr><td>Advances with suppliers</td><td className="r">{money(advance)}</td></tr>}
+                  <tr><td>Expenses (selected period)</td><td className="r">{money(total)}</td></tr>
+                  <tr><td>Expenses + supplier balance</td><td className="r">{money(r2(total + owed))}</td></tr>
+                </tfoot>
+              </table>
+            </div>
+          ) : (
+            <Empty title="No suppliers yet" message="Suppliers and what you owe them will show here." />
+          )}
+        </Card>
+        </div>
       </div>
 
       <ExpenseModal open={adding} onClose={() => setAdding(false)} categories={categories} />
