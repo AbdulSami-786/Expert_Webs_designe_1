@@ -22,11 +22,12 @@ export const IS_DESKTOP =
   typeof navigator !== 'undefined' && /\bElectron\//.test(navigator.userAgent || '');
 
 // Your deployed Apps Script Web App URL (the Google Sheet backend).
-// Deployment of Code.gs v1.7.0 (deleteSupplier: permanently deleting an archived supplier, on top of v1.6.1's
-// cheque delete also deleting the payment behind it, v1.6.0's Investments and Close Today permission, and
+// Deployment of Code.gs v1.8.0 (deleteExpense: permanently deleting an expense, on top of v1.7.0's deleteSupplier,
+// v1.6.1's cheque delete also deleting the payment behind it, v1.6.0's Investments and Close Today permission, and
 // v1.5.2's unlinkPartySupplier, deleteParty, deleteBill, deleteReturn, purgeEntries and idHints).
-// Open this link in a browser: it must show version 1.7.0 and list "deleteSupplier" among the features.
+// Open this link in a browser: it must show version 1.8.0 and list "deleteExpense" among the features.
 // Earlier deployments, kept for rolling back (they run OLDER code and do not know the newest actions):
+//   https://script.google.com/macros/s/AKfycbz2xY4yUIPQzAR8cgJsV6txfGkeiHsmRBx0SsexfuNTra0Y8uhhbOlSfAE792UcfNGLBQ/exec   (v1.7.0, before deleteExpense)
 //   https://script.google.com/macros/s/AKfycbypR98tVXDwetlGbbCYS3CQavA_mIki94etKQoE40YW1cnk0CkuH2gDrpPLJyKA0LLtFA/exec   (v1.6.1, before deleteSupplier)
 //   https://script.google.com/macros/s/AKfycbwp__g66hElbpATMJMVPskBahRCw3HkZE1PXhDmsXKuuLQ8eMM0nN_tbdh_kXlUYTp3iw/exec   (v1.6.0, cheque delete leaves the payment)
 //   https://script.google.com/macros/s/AKfycby_hMkFV34qjgjsbqGg9tY1M3Fl0wvzMs3lFkW8uAtUrPapK9NZ0phi9Lh9bOeZgs64Aw/exec   (v1.5.2, before Investments)
@@ -37,7 +38,7 @@ export const IS_DESKTOP =
 //   https://script.google.com/macros/s/AKfycbxjiF2Cbu3XRXkWHG6ZJDcdDZ1KkrOF-vuf0R7mR8vF1Y1C9SWTGzGw7gce4aYTKVYrEA/exec
 //   https://script.google.com/macros/s/AKfycbyPkrSO3jOpm8gxqGEI9-IHsdvkJDktnQGnsnPBM1EyDmdzsy7nrTLV1krhyeoBG1Ua/exec
 const SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbz2xY4yUIPQzAR8cgJsV6txfGkeiHsmRBx0SsexfuNTra0Y8uhhbOlSfAE792UcfNGLBQ/exec';
+  'https://script.google.com/macros/s/AKfycbz0NkSNh8TRQ99eqouBcu_peO-TzZvxiHKFJejAXM0SkoWMjU-eivdTz4hXrsGroPlMkw/exec';
 
 // Subscription control. See admin-dashboard/SETUP.md: deploy the license server, add this shop as a
 // client in the Admin Dashboard, then paste the two values here and rebuild.

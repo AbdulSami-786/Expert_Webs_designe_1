@@ -10,8 +10,10 @@ import { Card, Button, PageHead, Money, Stat, RangePicker } from '../components/
 import { auditSummary, rangeFor, accountBalances, deriveBills, inRange } from '../lib/calc';
 import { money, fmtDate, pctChange, r2 } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 export default function Audit() {
+  usePrintShortcut(() => onPDF());
   const { data, settings, methods, toast } = useApp();
   const [preset, setPreset] = useState('month');
   const [custom, setCustom] = useState({ from: '', to: '' });

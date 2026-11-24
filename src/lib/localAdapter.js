@@ -2434,6 +2434,25 @@ async function perform(action, payload = {}) {
       return rec;
     }
 
+    /* Permanently remove an expense. One that came from a stock loss takes that loss entry with it,
+       so the damaged goods go back into stock. Only a super admin may do this. */
+    case 'deleteExpense': {
+      const me = sessionUser(d);
+      if (!me || !isSuper(me) || !isActiveUser(me)) {
+        throw new Error('Only a super admin can permanently delete an expense.');
+      }
+      const exp = d.expenses.find((x) => x.id === payload.id);
+      if (!exp) throw new Error('Expense not found');
+      const loss = d.stockLoss.find((l) => l.id === exp.linkedStockLossId || l.linkedExpenseId === exp.id);
+      d.expenses = d.expenses.filter((x) => x.id !== exp.id);
+      if (loss) d.stockLoss = d.stockLoss.filter((l) => l.id !== loss.id);
+      logActivity(d, 'expense', exp.id, 'delete',
+        `Permanently deleted expense ${exp.category} — ${exp.amount}`
+        + (loss ? ` and its stock loss (${loss.qty} put back in stock)` : ''), exp, null);
+      save();
+      return { ok: true, stockLoss: Boolean(loss) };
+    }
+
     case 'saveStockLoss': {
       // Creates the loss log AND a linked Expense entry, no double entry (FR-36)
       const l = payload;

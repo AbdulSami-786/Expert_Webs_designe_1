@@ -619,6 +619,8 @@ export const api = {
   // Investments — money put into the business (counts as money in, like an opening balance)
   saveInvestment:   (i)         => call('saveInvestment', i),
   deleteInvestment: (id)        => call('deleteInvestment', { id }),
+  // Permanent; a stock-loss expense also removes its loss entry. Super admin only.
+  deleteExpense:  (id)          => call('deleteExpense', { id }),
 
   // Settings
   saveSettings:   (s)           => call('saveSettings', s),

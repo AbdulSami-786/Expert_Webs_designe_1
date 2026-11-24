@@ -27,8 +27,10 @@ import {
 } from '../lib/calc';
 import { money, fmtDate, r2, norm } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 export default function SupplierLedger() {
+  usePrintShortcut(() => onPrint());
   const { id } = useParams();
   const nav = useNavigate();
   const { data, settings, mutate, toast } = useApp();

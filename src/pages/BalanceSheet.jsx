@@ -8,8 +8,10 @@ import { Card, Button, PageHead, Money, Stat } from '../components/ui';
 import { balanceSheet } from '../lib/calc';
 import { money, fmtDate, r2 } from '../lib/format';
 import { exportExcel, printReport, raw, escapeHTML } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 export default function BalanceSheet() {
+  usePrintShortcut(() => onPDF());
   const { data, settings, methods, toast } = useApp();
 
   const sheet = useMemo(

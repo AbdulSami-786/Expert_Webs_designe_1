@@ -38,6 +38,7 @@ import DeletePartyModal from '../components/forms/DeletePartyModal';
 import DeleteReturnConfirm from '../components/forms/DeleteReturnConfirm';
 import SupplierPaymentModal from '../components/forms/SupplierPaymentModal';
 import BillReceiptModal from '../components/BillReceiptModal';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 import {
   deriveBills, partyAdvanceBalance, reorderSuggestion, partyCombinedStatement,
   partyPendingCheques, partyUnappliedCredit, linkedSupplier, supplierBalance, LEDGER_TABS, inLedgerTab,
@@ -74,6 +75,7 @@ export default function PartyLedger() {
 }
 
 function PartyLedgerView({ onRelock }) {
+  usePrintShortcut(() => onPDF());
   const { id } = useParams();
   const nav = useNavigate();
   const { data, settings, methods, mutate, toast, isAdmin } = useApp();

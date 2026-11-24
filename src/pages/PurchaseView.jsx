@@ -26,8 +26,10 @@ import {
 } from '../lib/calc';
 import { money, fmtDate, fmtDateTime, r2, waLink } from '../lib/format';
 import { printReport } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 export default function PurchaseView() {
+  usePrintShortcut(() => onPrint());
   const { id } = useParams();
   const nav = useNavigate();
   const { data, settings, mutate } = useApp();

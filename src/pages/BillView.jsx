@@ -20,12 +20,14 @@ import LineDeliveryModal, { DeliveredCount } from '../components/forms/LineDeliv
 import { deriveBills, billDelivery, lineDeliveredQty, installmentStatus, partyUnappliedCredit } from '../lib/calc';
 import { money, fmtDate, fmtDateTime, waLink, totalQtyLabel, r2 } from '../lib/format';
 import { printBill, downloadBillPDF } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 // Newest entry first (the last one recorded on a day comes before the earlier ones).
 const newestFirst = (list) => [...list].reverse()
   .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
 export default function BillView() {
+  usePrintShortcut(() => onPrint());
   const { id } = useParams();
   const nav = useNavigate();
   const { data, settings, mutate, isAdmin } = useApp();

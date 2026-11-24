@@ -10,10 +10,12 @@ import {
 import { ledgerBook, rangeFor } from '../lib/calc';
 import { money, fmtDate, r2 } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 // mode 'installment' shows only bills sold on an instalment plan (the Installment Entry page);
 // the normal Ledger Book leaves those out.
 export default function LedgerBook({ mode = 'regular' }) {
+  usePrintShortcut(() => onPDF());
   const inst = mode === 'installment';
   const pageTitle = inst ? 'Installment Entry' : 'Ledger Book';
   const { data, settings, activeParties, toast } = useApp();

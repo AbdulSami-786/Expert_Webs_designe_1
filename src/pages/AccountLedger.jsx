@@ -9,8 +9,10 @@ import { Card, Button, Empty, PageHead, Money, Stat, Pill } from '../components/
 import { accountLedger, accountBalances } from '../lib/calc';
 import { money, fmtDate, r2 } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 export default function AccountLedger() {
+  usePrintShortcut(() => onPDF());
   const { method: raw } = useParams();
   const method = decodeURIComponent(raw || '');
   const nav = useNavigate();

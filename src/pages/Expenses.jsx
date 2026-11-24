@@ -2,20 +2,23 @@
 // that arrive automatically from the Damaged Stock page (FR-36).
 
 import { useMemo, useState } from 'react';
-import { Plus, Wallet, Download, Link2, Save } from 'lucide-react';
+import { Plus, Wallet, Download, Link2, Save, Trash2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
 import {
   Card, Button, Modal, Empty, PageHead, SearchBar, Money, Pill, Field, Input,
-  Select, Stat, RangePicker, Textarea,
+  Select, Stat, RangePicker, Textarea, Confirm,
 } from '../components/ui';
 import { rangeFor, inRange, supplierNetBalance, deriveBills } from '../lib/calc';
 import { money, fmtDate, norm, todayISO, r2 } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 import { EXPENSE_CATEGORIES } from '../lib/config';
 
 export default function Expenses() {
-  const { data, settings, toast } = useApp();
+  usePrintShortcut(() => onPDF());
+  const { data, settings, toast, mutate, isAdmin } = useApp();
+  const [deleting, setDeleting] = useState(null);
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('all');
   const [preset, setPreset] = useState('month');
@@ -61,6 +64,22 @@ export default function Expenses() {
   const advance = useMemo(
     () => r2(supplierRows.reduce((s, x) => s + Math.max(0, -x.balance), 0)), [supplierRows]);
 
+  const doDelete = async () => {
+    const e = deleting;
+    setDeleting(null);
+    try {
+      await mutate(() => api.deleteExpense(e.id), 'Expense deleted');
+    } catch { /* toast shown */ }
+  };
+
+  const delBtn = (e) => (isAdmin ? (
+    <button className="btn btn-ghost btn-sm" title="Delete permanently"
+            style={{ color: 'var(--danger)' }}
+            onClick={() => setDeleting(e)}>
+      <Trash2 size={14} />
+    </button>
+  ) : null);
+
   const onExcel = () => {
     exportExcel('Expenses',
       ['Date', 'Category', 'Amount', 'Paid from', 'Note'],
@@ -103,7 +122,7 @@ export default function Expenses() {
               <div className="table-wrap hide-mobile">
                 <table className="tbl">
                   <thead>
-                    <tr><th>Date</th><th>Category</th><th>Paid from</th><th>Note</th><th className="r">Amount</th></tr>
+                    <tr><th>Date</th><th>Category</th><th>Paid from</th><th>Note</th><th className="r">Amount</th>{isAdmin && <th style={{ width: 44 }}></th>}</tr>
                   </thead>
                   <tbody>
                     {rows.map((e) => (
@@ -118,6 +137,7 @@ export default function Expenses() {
                         <td>{e.method || <span className="muted">—</span>}</td>
                         <td className="small muted">{e.note || '—'}</td>
                         <td className="r strong"><Money value={e.amount} /></td>
+                        {isAdmin && <td>{delBtn(e)}</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -125,6 +145,7 @@ export default function Expenses() {
                     <tr>
                       <td colSpan={4}>{rows.length} entries</td>
                       <td className="r">{money(total)}</td>
+                      {isAdmin && <td />}
                     </tr>
                   </tfoot>
                 </table>
@@ -142,6 +163,8 @@ export default function Expenses() {
                       {e.method && <span>{e.method}</span>}
                       {e.note && <span>{e.note}</span>}
                       {e.linkedStockLossId && <Pill status="pending" label="Stock loss" />}
+                      <span className="spacer" />
+                      {delBtn(e)}
                     </div>
                   </div>
                 ))}
@@ -214,6 +237,19 @@ export default function Expenses() {
       </div>
 
       <ExpenseModal open={adding} onClose={() => setAdding(false)} categories={categories} />
+
+      <Confirm
+        open={Boolean(deleting)}
+        title="Delete expense permanently?"
+        message={deleting
+          ? `${deleting.category} — ${money(deleting.amount)} on ${fmtDate(deleting.date)} will be removed for good. This cannot be undone.`
+            + (deleting.linkedStockLossId ? ' Its stock loss entry is removed too, so those items go back into stock.' : '')
+          : ''}
+        confirmLabel="Delete permanently"
+        danger
+        onConfirm={doDelete}
+        onCancel={() => setDeleting(null)}
+      />
     </>
   );
 }

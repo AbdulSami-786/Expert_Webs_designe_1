@@ -10,8 +10,10 @@ import {
 import { deriveBills, rangeFor, inRange, billDelivery } from '../lib/calc';
 import { money, fmtDate, norm, AGING_META, r2 } from '../lib/format';
 import { exportExcel, printReport, raw, escapeHTML } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 export default function Bills() {
+  usePrintShortcut(() => onPDF());
   const { data, settings, toast } = useApp();
   const nav = useNavigate();
   const [q, setQ] = useState('');

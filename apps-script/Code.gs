@@ -161,8 +161,8 @@ var BOOLEAN = { reversed: 1, restock: 1, active: 1, isAdvance: 1 };
  * missing, the link is still serving an old deployment (saving Code.gs is not enough: it needs
  * Deploy > Manage deployments > pencil > Version: New version > Deploy).
  */
-var BACKEND_VERSION = '1.7.0';
-var BACKEND_FEATURES = ['deleteSupplier', 'deleteChequePayment','adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier', 'investments'];
+var BACKEND_VERSION = '1.8.0';
+var BACKEND_FEATURES = ['deleteExpense', 'deleteSupplier', 'deleteChequePayment','adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier', 'investments'];
 
 function doGet(e) {
   return json({
@@ -374,6 +374,7 @@ function route(action, p, token) {
     case 'addEmployeeTx':    return addEmployeeTx(p);
 
     case 'saveExpense':      return saveExpense(p);
+    case 'deleteExpense':    return deleteExpense(p);
     case 'saveStockLoss':    return saveStockLoss(p);
     case 'saveAsset':        return saveAsset(p);
     case 'saveInvestment':   return saveInvestment(p);
@@ -4365,6 +4366,34 @@ function saveExpense(p) {
     appendRow('Expenses', rec);
     logActivity('expense', rec.id, 'create', 'Expense ' + rec.category + ' — ' + rec.amount);
     return rec;
+  });
+}
+
+/**
+ * Permanently delete an expense. One that came from a stock loss takes that loss entry with it,
+ * so the damaged goods go back into stock. Super admin only. (Mirrors 'deleteExpense' of the
+ * browser adapter.)
+ */
+function deleteExpense(p) {
+  return withLock(function () {
+    var me = findUserByName(readAll('Users'), ACTING_USER);
+    if (!me || !userIsSuper(me) || !userIsActive(me)) {
+      fail('Only a super admin can permanently delete an expense.');
+    }
+    var exp = getById('Expenses', p.id);
+    if (!p.id || !exp) fail('Expense not found');
+
+    var loss = null;
+    readAll('StockLoss').forEach(function (l) {
+      if (!loss && (String(l.id) === String(exp.linkedStockLossId) || String(l.linkedExpenseId) === String(exp.id))) loss = l;
+    });
+    deleteRowById('Expenses', exp.id);
+    if (loss) deleteRowById('StockLoss', loss.id);
+
+    logActivity('expense', exp.id, 'delete',
+      'Permanently deleted expense ' + exp.category + ' — ' + exp.amount +
+      (loss ? ' and its stock loss (' + loss.qty + ' put back in stock)' : ''), exp, null);
+    return { ok: true, stockLoss: !!loss };
   });
 }
 

@@ -18,8 +18,10 @@ import {
   money, fmtDate, norm, AGING_BUCKETS, AGING_META, waLink, r2,
 } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 export default function Outstanding() {
+  usePrintShortcut(() => onPDF());
   const { data, settings, toast } = useApp();
   const nav = useNavigate();
   const [q, setQ] = useState('');

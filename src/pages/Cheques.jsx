@@ -17,8 +17,10 @@ import {
 } from '../components/ui';
 import { money, fmtDate, norm, r2, daysBetween } from '../lib/format';
 import { exportExcel, printReport, raw, escapeHTML } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 export default function Cheques() {
+  usePrintShortcut(() => onPDF());
   const { data, settings, mutate, toast } = useApp();
   const nav = useNavigate();
   const [q, setQ] = useState('');

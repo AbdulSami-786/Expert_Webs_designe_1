@@ -15,8 +15,10 @@ import {
 import { rangeFor, inRange, lineProfit } from '../lib/calc';
 import { money, fmtDate, r2, unitFactor } from '../lib/format';
 import { exportExcel, printReport } from '../lib/exporters';
+import { usePrintShortcut } from '../lib/usePrintShortcut';
 
 export default function ProfitReport() {
+  usePrintShortcut(() => onPDF());
   const { data, settings, toast } = useApp();
   const [preset, setPreset] = useState('month');
   const [custom, setCustom] = useState({ from: '', to: '' });
