@@ -41,7 +41,7 @@ function emptyDb() {
     bills: [], billItems: [], payments: [], returns: [],
     cheques: [], partyAdvances: [], purchases: [],
     employees: [], employeeTx: [],
-    expenses: [], stockLoss: [], assets: [], investments: [],
+    expenses: [], stockLoss: [], assets: [], investments: [], transfers: [],
     activityLog: [], users: [], partyLedgerLinks: [],
     // The buying side: suppliers, their purchase bills (lines live in
     // `purchases`), payments made to them and goods sent back to them.
@@ -57,6 +57,7 @@ function emptyDb() {
       priceAlertThreshold: 15,
       defaultCreditDays: 7,
       customMethods: [],
+      customCategories: [],
     },
     billCounter: {},
   };
@@ -124,7 +125,7 @@ export const SYNCED_KEYS = [
   'parties', 'items', 'employees', 'assets', 'purchases', 'bills', 'billItems',
   'partyItemPrices', 'payments', 'returns', 'cheques', 'partyAdvances',
   'employeeTx', 'expenses', 'stockLoss',
-  'suppliers', 'purchaseBills', 'supplierPayments', 'supplierReturns', 'investments',
+  'suppliers', 'purchaseBills', 'supplierPayments', 'supplierReturns', 'investments', 'transfers',
 ];
 
 /**
@@ -2518,6 +2519,34 @@ async function perform(action, payload = {}) {
       d.investments.splice(i, 1);
       logActivity(d, 'investment', inv.id, 'delete',
         `Deleted investment of ${inv.amount} (${inv.method})`, inv, null);
+      save();
+      return { ok: true };
+    }
+
+    /* ---------------- Transfers (money moved between the shop's own accounts) ---------------- */
+    case 'saveTransfer': {
+      const t = payload;
+      if (!(Number(t.amount) > 0)) throw new Error('Enter a transfer amount greater than zero');
+      if (!t.fromMethod || !t.toMethod) throw new Error('Choose the account to move the money from and to');
+      if (t.fromMethod === t.toMethod) throw new Error('Choose two different accounts');
+      const rec = {
+        id: uid('trf'), fromMethod: t.fromMethod, toMethod: t.toMethod, amount: r2(t.amount),
+        date: t.date || todayISO(), note: t.note || '',
+      };
+      d.transfers.push(rec);
+      logActivity(d, 'transfer', rec.id, 'create',
+        `Transfer ${rec.amount} from ${rec.fromMethod} to ${rec.toMethod}`);
+      save();
+      return rec;
+    }
+
+    case 'deleteTransfer': {
+      const i = d.transfers.findIndex((x) => x.id === payload.id);
+      if (i < 0) throw new Error('Transfer not found');
+      const trf = d.transfers[i];
+      d.transfers.splice(i, 1);
+      logActivity(d, 'transfer', trf.id, 'delete',
+        `Deleted transfer of ${trf.amount} (${trf.fromMethod} to ${trf.toMethod})`, trf, null);
       save();
       return { ok: true };
     }

@@ -81,6 +81,9 @@ var SCHEMA = {
   // Money the owner (or a partner) puts into the business: it counts as money IN on the chosen
   // payment method, exactly like an opening balance. The tab is created on first use.
   Investments: ['id', 'investor', 'amount', 'method', 'date', 'note'],
+  // Money moved from one of the shop's own accounts to another (cash -> bank, say). It leaves
+  // fromMethod and arrives in toMethod, so the shop's total never changes. Created on first use.
+  Transfers: ['id', 'fromMethod', 'toMethod', 'amount', 'date', 'note'],
   ActivityLog: ['id', 'entityType', 'entityId', 'action', 'description', 'oldValue',
                 'newValue', 'user', 'timestamp'],
   // fullName/status/allowedPages/createdAt appended (never inserted). role is
@@ -111,6 +114,7 @@ var TAB_TO_KEY = {
   StockLoss: 'stockLoss',
   Assets: 'assets',
   Investments: 'investments',
+  Transfers: 'transfers',
   ActivityLog: 'activityLog',
   PartyLedgerLinks: 'partyLedgerLinks',
   Suppliers: 'suppliers',
@@ -161,8 +165,8 @@ var BOOLEAN = { reversed: 1, restock: 1, active: 1, isAdvance: 1 };
  * missing, the link is still serving an old deployment (saving Code.gs is not enough: it needs
  * Deploy > Manage deployments > pencil > Version: New version > Deploy).
  */
-var BACKEND_VERSION = '1.8.0';
-var BACKEND_FEATURES = ['deleteExpense', 'deleteSupplier', 'deleteChequePayment','adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier', 'investments'];
+var BACKEND_VERSION = '1.11.0';
+var BACKEND_FEATURES = ['transfers', 'expenseCategories','deleteExpense', 'deleteSupplier', 'deleteChequePayment','adoptPurchases', 'addRefund', 'supplierOnBillLines', 'installPlan', 'idHints', 'deleteParty', 'deleteReturn', 'deleteBill', 'purgeEntries', 'unlinkPartySupplier', 'investments'];
 
 function doGet(e) {
   return json({
@@ -190,7 +194,7 @@ var ACTING_USER = 'system';
  */
 var REPLAY_GUARDED = {
   saveBill: 1, addPayment: 1, addReturn: 1, addRefund: 1, addAdvance: 1, savePurchase: 1,
-  addEmployeeTx: 1, saveExpense: 1, saveStockLoss: 1, saveAsset: 1, saveInvestment: 1,
+  addEmployeeTx: 1, saveExpense: 1, saveStockLoss: 1, saveAsset: 1, saveInvestment: 1, saveTransfer: 1,
   saveCheque: 1, settleParty: 1,
   savePurchaseBill: 1, adoptPurchases: 1, addSupplierPayment: 1, addSupplierReturn: 1, saveSupplier: 1,
   setOffParty: 1
@@ -379,6 +383,8 @@ function route(action, p, token) {
     case 'saveAsset':        return saveAsset(p);
     case 'saveInvestment':   return saveInvestment(p);
     case 'deleteInvestment': return deleteInvestment(p);
+    case 'saveTransfer':     return saveTransfer(p);
+    case 'deleteTransfer':   return deleteTransfer(p);
 
     case 'saveSettings':     return saveSettings(p);
 
@@ -839,8 +845,13 @@ var SETTINGS_DEFAULTS = {
   roundingRule: 'nearest1',
   priceAlertThreshold: 15,
   defaultCreditDays: 7,
-  customMethods: []
+  customMethods: [],
+  // Expense categories the shop added on the Expenses page, on top of the built-in ones.
+  customCategories: []
 };
+
+/** Settings whose value is a list, stored in one cell as JSON text. */
+var LIST_SETTINGS = { customMethods: 1, customCategories: 1 };
 
 function readSettings() {
   var rows = readAll('Settings');
@@ -850,7 +861,7 @@ function readSettings() {
   rows.forEach(function (r) {
     if (!r.key) return;
     var v = r.value;
-    if (r.key === 'customMethods') {
+    if (LIST_SETTINGS[r.key]) {
       try { v = JSON.parse(v || '[]'); } catch (e) { v = []; }
     } else if (r.key === 'phone') {
       v = phoneText(v);
@@ -869,7 +880,7 @@ function saveSettings(patch) {
 
     for (var key in patch) {
       var value = patch[key];
-      if (key === 'customMethods') value = JSON.stringify(value || []);
+      if (LIST_SETTINGS[key]) value = JSON.stringify(value || []);
       value = asText(key, value);
       var rowNum = findRow('Settings', key, 'key');
       if (rowNum > 0) {
@@ -1470,7 +1481,7 @@ function syncPush(p) {
     'PurchaseBills', 'Purchases', 'Bills', 'BillItems', 'PartyItemPrices',
     'Payments', 'Returns', 'Cheques', 'PartyAdvances',
     'EmployeeTransactions', 'Expenses', 'StockLoss',
-    'SupplierPayments', 'SupplierReturns', 'Investments',
+    'SupplierPayments', 'SupplierReturns', 'Investments', 'Transfers',
     'ActivityLog'
   ];
 
@@ -4483,6 +4494,42 @@ function deleteInvestment(p) {
   });
 }
 
+/**
+ * Move money from one of the shop's accounts to another (cash -> bank, say). It leaves
+ * `fromMethod` and arrives in `toMethod`: each account's balance changes, the total does not.
+ */
+function saveTransfer(p) {
+  return withLock(function () {
+    if (!(Number(p.amount) > 0)) fail('Enter a transfer amount greater than zero');
+    if (!p.fromMethod || !p.toMethod) fail('Choose the account to move the money from and to');
+    if (p.fromMethod === p.toMethod) fail('Choose two different accounts');
+    var rec = {
+      id: uid('trf'),
+      fromMethod: p.fromMethod,
+      toMethod: p.toMethod,
+      amount: r2(p.amount),
+      date: p.date || todayISO(),
+      note: p.note || ''
+    };
+    appendRow('Transfers', rec);
+    logActivity('transfer', rec.id, 'create',
+      'Transfer ' + rec.amount + ' from ' + rec.fromMethod + ' to ' + rec.toMethod);
+    return rec;
+  });
+}
+
+/** Undo a transfer that was entered by mistake. */
+function deleteTransfer(p) {
+  return withLock(function () {
+    var t = getById('Transfers', p.id);
+    if (!t) fail('Transfer not found');
+    deleteRowById('Transfers', p.id);
+    logActivity('transfer', p.id, 'delete',
+      'Deleted transfer of ' + t.amount + ' (' + t.fromMethod + ' to ' + t.toMethod + ')', t, null);
+    return { ok: true };
+  });
+}
+
 /* ==========================================================================
    Shared ledger links (FR-20 / FR-21)
    ========================================================================== */
@@ -4605,7 +4652,7 @@ function ensureSeed() {
     var s = sheet('Settings');
     for (var k in SETTINGS_DEFAULTS) {
       var v = SETTINGS_DEFAULTS[k];
-      s.appendRow([k, k === 'customMethods' ? JSON.stringify(v) : v]);
+      s.appendRow([k, LIST_SETTINGS[k] ? JSON.stringify(v) : v]);
     }
   }
 }

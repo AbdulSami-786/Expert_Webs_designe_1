@@ -2,7 +2,7 @@
 // that arrive automatically from the Damaged Stock page (FR-36).
 
 import { useMemo, useState } from 'react';
-import { Plus, Wallet, Download, Link2, Save, Trash2 } from 'lucide-react';
+import { Plus, Wallet, Download, Link2, Save, Trash2, Tag, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../lib/api';
 import {
@@ -24,12 +24,20 @@ export default function Expenses() {
   const [preset, setPreset] = useState('month');
   const [custom, setCustom] = useState({ from: '', to: '' });
   const [adding, setAdding] = useState(false);
+  const [managingCats, setManagingCats] = useState(false);
 
   const range = useMemo(() => rangeFor(preset, custom), [preset, custom]);
 
+  // Categories the shop added itself (Settings). An old script can hand back a string: ignore it.
+  const customCategories = useMemo(
+    () => (Array.isArray(settings.customCategories) ? settings.customCategories : []),
+    [settings.customCategories]
+  );
+
   const categories = useMemo(
-    () => [...new Set([...EXPENSE_CATEGORIES, ...data.expenses.map((e) => e.category)])].filter(Boolean).sort(),
-    [data.expenses]
+    () => [...new Set([...EXPENSE_CATEGORIES, ...customCategories, ...data.expenses.map((e) => e.category)])]
+      .filter(Boolean).sort(),
+    [data.expenses, customCategories]
   );
 
   const rows = useMemo(() => {
@@ -104,6 +112,7 @@ export default function Expenses() {
           {categories.map((c) => <option key={c} value={c}>{c}</option>)}
         </Select>
         <Button icon={Download} onClick={onExcel}>Excel</Button>
+        <Button icon={Tag} onClick={() => setManagingCats(true)}>Add Category</Button>
         <Button variant="primary" icon={Plus} onClick={() => setAdding(true)}>Add Expense</Button>
       </PageHead>
 
@@ -238,6 +247,9 @@ export default function Expenses() {
 
       <ExpenseModal open={adding} onClose={() => setAdding(false)} categories={categories} />
 
+      <CategoryModal open={managingCats} onClose={() => setManagingCats(false)}
+                     custom={customCategories} builtIn={EXPENSE_CATEGORIES} used={data.expenses} />
+
       <Confirm
         open={Boolean(deleting)}
         title="Delete expense permanently?"
@@ -251,6 +263,70 @@ export default function Expenses() {
         onCancel={() => setDeleting(null)}
       />
     </>
+  );
+}
+
+/** Add your own expense categories (e.g. "Fuel", "Packaging"), or remove ones you added. */
+function CategoryModal({ open, onClose, custom, builtIn, used }) {
+  const { mutate, toast } = useApp();
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const save = async (list, message) => {
+    setBusy(true);
+    try {
+      await mutate(() => api.saveSettings({ customCategories: list }), message);
+      return true;
+    } catch { return false; } finally { setBusy(false); }
+  };
+
+  const add = async () => {
+    const n = name.trim().replace(/\s+/g, ' ');
+    if (!n || busy) return;
+    if ([...builtIn, ...custom].some((c) => c.toLowerCase() === n.toLowerCase())) {
+      return toast('That category already exists', 'error');
+    }
+    if (await save([...custom, n], `"${n}" added`)) setName('');
+  };
+
+  const remove = (c) => save(custom.filter((x) => x !== c), `"${c}" removed`);
+  const inUse = (c) => used.some((e) => e.category === c);
+
+  return (
+    <Modal open={open} title="Expense Categories" onClose={onClose}
+           footer={<Button onClick={onClose}>Done</Button>}>
+      <Field label="New category" hint="It appears in the Add Expense list straight away">
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus maxLength={40}
+                 placeholder="e.g. Fuel, Packaging, Marketing"
+                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
+          <Button variant="primary" icon={Plus} onClick={add} loading={busy} disabled={!name.trim()}>
+            Add
+          </Button>
+        </div>
+      </Field>
+
+      <div className="small muted" style={{ margin: '14px 0 6px' }}>Your categories</div>
+      {custom.length ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {custom.map((c) => (
+            <span key={c} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 6px 5px 11px',
+              background: 'var(--neutral-bg)', borderRadius: 999, fontSize: 13,
+            }}>
+              {c}
+              <button className="btn btn-ghost btn-sm" disabled={busy}
+                      title={inUse(c) ? 'Removed from the list; past expenses keep this category' : 'Remove'}
+                      onClick={() => remove(c)} style={{ padding: 2 }}>
+                <X size={13} />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="small muted">None yet. Built-in: {builtIn.join(', ')}.</div>
+      )}
+    </Modal>
   );
 }
 

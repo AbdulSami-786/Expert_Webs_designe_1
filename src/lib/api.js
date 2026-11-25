@@ -177,7 +177,7 @@ const OPTIMISTIC = new Set([
   'addSupplierPayment', 'deleteSupplierPayment', 'addSupplierReturn', 'deleteSupplierReturn',
   'setOffParty',
   'saveEmployee', 'addEmployeeTx', 'saveExpense', 'saveStockLoss', 'saveAsset',
-  'saveInvestment', 'deleteInvestment',
+  'saveInvestment', 'deleteInvestment', 'saveTransfer', 'deleteTransfer',
   'saveSettings',
 ]);
 
@@ -619,6 +619,9 @@ export const api = {
   // Investments — money put into the business (counts as money in, like an opening balance)
   saveInvestment:   (i)         => call('saveInvestment', i),
   deleteInvestment: (id)        => call('deleteInvestment', { id }),
+  // Transfers — money moved from one of the shop's accounts to another (net zero overall)
+  saveTransfer:     (t)         => call('saveTransfer', t),
+  deleteTransfer:   (id)        => call('deleteTransfer', { id }),
   // Permanent; a stock-loss expense also removes its loss entry. Super admin only.
   deleteExpense:  (id)          => call('deleteExpense', { id }),
 

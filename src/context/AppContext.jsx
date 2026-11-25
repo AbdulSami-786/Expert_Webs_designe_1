@@ -26,7 +26,7 @@ const EMPTY = {
   bills: [], billItems: [], payments: [], returns: [],
   cheques: [], partyAdvances: [], purchases: [],
   employees: [], employeeTx: [],
-  expenses: [], stockLoss: [], assets: [], investments: [],
+  expenses: [], stockLoss: [], assets: [], investments: [], transfers: [],
   activityLog: [], partyLedgerLinks: [],
   suppliers: [], purchaseBills: [], supplierPayments: [], supplierReturns: [],
   settings: {

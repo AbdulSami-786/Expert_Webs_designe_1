@@ -843,7 +843,7 @@ export function collectedPayments(payments = [], cheques = []) {
  */
 export function accountBalances(methods = [], {
   payments = [], expenses = [], employeeTx = [], cheques = [], supplierPayments = [], returns = [],
-  investments = [],
+  investments = [], transfers = [],
 } = {}) {
   const pendingOrBounced = new Set(
     cheques.filter((c) => c.status !== 'cleared' && c.paymentId).map((c) => c.paymentId)
@@ -856,7 +856,11 @@ export function accountBalances(methods = [], {
       .reduce((s, p) => s + (Number(p.amount) || 0), 0)
       + investments
         .filter((v) => (v.method || 'Cash') === m)
-        .reduce((s, v) => s + (Number(v.amount) || 0), 0);
+        .reduce((s, v) => s + (Number(v.amount) || 0), 0)
+      // Money moved INTO this account from another one of the shop's accounts.
+      + transfers
+        .filter((t) => t.toMethod === m)
+        .reduce((s, t) => s + (Number(t.amount) || 0), 0);
 
     // A stock-loss write-off is an expense for the profit figures, but no money
     // left any account: the goods were damaged, not paid for again. Counting it
@@ -879,7 +883,12 @@ export function accountBalances(methods = [], {
       .filter((r) => Number(r.refundAmount) > 0 && (r.refundMethod || 'Cash') === m)
       .reduce((s, r) => s + (Number(r.refundAmount) || 0), 0);
 
-    const out = outExp + outSal + outSup + outRef;
+    // Money moved OUT of this account into another one.
+    const outTrf = transfers
+      .filter((t) => t.fromMethod === m)
+      .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
+    const out = outExp + outSal + outSup + outRef + outTrf;
     return { method: m, in: r2(inflow), out: r2(out), balance: r2(inflow - out) };
   });
 }
@@ -887,7 +896,7 @@ export function accountBalances(methods = [], {
 /** Full chronological transaction history for one method, with running balance. */
 export function accountLedger(method, {
   payments = [], expenses = [], employeeTx = [], cheques = [], parties = [], employees = [],
-  supplierPayments = [], suppliers = [], returns = [], bills = [], investments = [],
+  supplierPayments = [], suppliers = [], returns = [], bills = [], investments = [], transfers = [],
 } = {}) {
   const pending = new Set(
     cheques.filter((c) => c.status !== 'cleared' && c.paymentId).map((c) => c.paymentId)
@@ -947,6 +956,19 @@ export function accountLedger(method, {
         id: `ref-${r.id}`, date: r.refundDate || r.date, direction: 'out', amount: r2(r.refundAmount),
         desc: `Refund to ${partyName(bill?.partyId)} — return on Bill ${bill?.billNo || ''}`.trim(),
         relatedType: 'refund', relatedId: r.billId,
+      });
+    });
+
+  // A transfer shows on both accounts: out of the one it left, in to the one it reached.
+  transfers
+    .filter((t) => t.fromMethod === method || t.toMethod === method)
+    .forEach((t) => {
+      const leaving = t.fromMethod === method;
+      rows.push({
+        id: `${t.id}-${leaving ? 'out' : 'in'}`, date: t.date, direction: leaving ? 'out' : 'in',
+        amount: r2(t.amount),
+        desc: `${leaving ? `Transfer to ${t.toMethod}` : `Transfer from ${t.fromMethod}`}${t.note ? ` — ${t.note}` : ''}`,
+        relatedType: 'transfer', relatedId: t.id,
       });
     });
 
